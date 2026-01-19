@@ -184,6 +184,22 @@ func (s *Store) ReplacePlan(plan Plan) (int64, error) {
 	return planID, nil
 }
 
+func (s *Store) ClearPlan() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM plan_actions`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM plans`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) LatestPlan() (*Plan, error) {
 	row := s.db.QueryRow(`SELECT id, created_at, status FROM plans ORDER BY id DESC LIMIT 1`)
 	var plan Plan

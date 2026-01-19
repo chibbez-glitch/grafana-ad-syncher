@@ -8,7 +8,7 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       DATA_DIR: "/data"
-      SYNC_INTERVAL: "15m"
+      SYNC_INTERVAL: "0"
       DEFAULT_USER_ROLE: "Viewer"
       ALLOW_CREATE_USERS: "true"
       ALLOW_REMOVE_TEAM_MEMBERS: "true"

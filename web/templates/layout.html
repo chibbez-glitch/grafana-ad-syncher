@@ -13,11 +13,17 @@
       <p>Manage orgs, mappings, and run syncs.</p>
     </div>
     <div class="sync-actions">
+      <form action="/sync/run" method="post">
+        <button type="submit" class="primary">Run sync now</button>
+      </form>
       <form action="/sync/preview" method="post">
-        <button type="submit" class="primary">Preview sync</button>
+        <button type="submit" class="ghost">Preview sync</button>
       </form>
       <form action="/sync/apply" method="post">
         <button type="submit" class="ghost">Apply plan</button>
+      </form>
+      <form action="/sync/clear" method="post">
+        <button type="submit" class="ghost">Clear plan</button>
       </form>
       <div class="status">
         <span>Last run: {{.LastRun}}</span>

@@ -98,7 +98,9 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/mappings", s.handleCreateMapping)
 	mux.HandleFunc("/mappings/delete", s.handleDeleteMapping)
 	mux.HandleFunc("/sync/preview", s.handlePreview)
+	mux.HandleFunc("/sync/run", s.handleRun)
 	mux.HandleFunc("/sync/apply", s.handleApply)
+	mux.HandleFunc("/sync/clear", s.handleClearPlan)
 }
 
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +251,35 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	plan, err := s.syncer.BuildPlan()
+	if err != nil {
+		http.Error(w, "failed to build plan", http.StatusInternalServerError)
+		return
+	}
+	planID, err := s.store.ReplacePlan(*plan)
+	if err != nil {
+		http.Error(w, "failed to store plan", http.StatusInternalServerError)
+		return
+	}
+	if err := s.store.UpdatePlanStatus(planID, "applying"); err != nil {
+		log.Printf("plan status update failed: %v", err)
+	}
+	err = s.syncer.ApplyPlan(plan.Actions)
+	s.syncer.RecordRun(err)
+	if err != nil {
+		_ = s.store.UpdatePlanStatus(planID, "failed")
+		http.Error(w, "apply failed", http.StatusInternalServerError)
+		return
+	}
+	_ = s.store.UpdatePlanStatus(planID, "applied")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -274,6 +305,18 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.UpdatePlanStatus(plan.ID, "applied")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleClearPlan(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := s.store.ClearPlan(); err != nil {
+		http.Error(w, "failed to clear plan", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
