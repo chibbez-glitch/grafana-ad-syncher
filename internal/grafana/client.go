@@ -2,6 +2,7 @@ package grafana
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -39,13 +40,17 @@ type OrgUser struct {
 	Role  string `json:"role"`
 }
 
-func New(baseURL, adminUser, adminPassword, adminToken string) *Client {
+func New(baseURL, adminUser, adminPassword, adminToken string, insecureTLS bool) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if insecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	return &Client{
 		baseURL:       strings.TrimRight(baseURL, "/"),
 		adminUser:     adminUser,
 		adminPassword: adminPassword,
 		adminToken:    adminToken,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		httpClient:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
 	}
 }
 

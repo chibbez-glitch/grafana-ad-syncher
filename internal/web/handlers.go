@@ -428,6 +428,9 @@ func (s *Server) loadEntraGroups(orgs []store.Org, mappings []store.Mapping) ([]
 	}
 	views := make([]entraGroupView, 0, len(groups))
 	for _, group := range groups {
+		if !matchEntraGroupName(group.DisplayName) {
+			continue
+		}
 		mapped := byGroup[group.ID]
 		info := mappingTeamsSummary(mapped, orgNames)
 		state := "unmapped"
@@ -453,6 +456,11 @@ func (s *Server) loadEntraGroups(orgs []store.Org, mappings []store.Mapping) ([]
 		return strings.ToLower(views[i].DisplayName) < strings.ToLower(views[j].DisplayName)
 	})
 	return views, ""
+}
+
+func matchEntraGroupName(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(lower, "gapp_") && strings.Contains(lower, "_grf_")
 }
 
 func (s *Server) loadEntraUsers() ([]entraUserView, string) {

@@ -14,6 +14,7 @@ type Config struct {
 	GrafanaAdminUser      string
 	GrafanaAdminPassword  string
 	GrafanaAdminToken     string
+	GrafanaInsecureTLS    bool
 	DefaultUserRole       string
 	AllowCreateUsers      bool
 	AllowRemoveMembers    bool
@@ -33,6 +34,7 @@ func Load() Config {
 		GrafanaAdminUser:      getEnv("GRAFANA_ADMIN_USER", "admin"),
 		GrafanaAdminPassword:  getEnv("GRAFANA_ADMIN_PASSWORD", ""),
 		GrafanaAdminToken:     getEnv("GRAFANA_ADMIN_TOKEN", ""),
+		GrafanaInsecureTLS:    getEnvBool("GRAFANA_INSECURE_TLS", false),
 		DefaultUserRole:       getEnv("DEFAULT_USER_ROLE", "Viewer"),
 		AllowCreateUsers:      getEnvBool("ALLOW_CREATE_USERS", true),
 		AllowRemoveMembers:    getEnvBool("ALLOW_REMOVE_TEAM_MEMBERS", true),
