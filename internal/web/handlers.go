@@ -108,6 +108,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	start := time.Now()
 
 	orgs, err := s.store.ListOrgs()
 	if err != nil {
@@ -147,6 +148,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render error: %v", err)
 	}
+	log.Printf("ui: index rendered in %s", time.Since(start).Round(time.Millisecond))
 }
 
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
@@ -331,6 +333,7 @@ func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([
 	if s.grafana == nil {
 		return nil, "grafana client not configured"
 	}
+	start := time.Now()
 	byName := map[string][]store.Mapping{}
 	byID := map[string][]store.Mapping{}
 	for _, m := range mappings {
@@ -349,9 +352,11 @@ func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([
 	for _, org := range orgs {
 		teams, err := s.grafana.ListTeams(org.GrafanaOrgID)
 		if err != nil {
+			log.Printf("ui: grafana teams fetch failed for org %d: %v", org.GrafanaOrgID, err)
 			errs = append(errs, fmt.Sprintf("org %d: %v", org.GrafanaOrgID, err))
 			continue
 		}
+		log.Printf("ui: grafana teams fetched org=%d count=%d", org.GrafanaOrgID, len(teams))
 		for _, team := range teams {
 			var mapped []store.Mapping
 			if team.ID > 0 {
@@ -381,6 +386,7 @@ func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([
 		}
 		return views[i].OrgID < views[j].OrgID
 	})
+	log.Printf("ui: grafana teams total=%d in %s", len(views), time.Since(start).Round(time.Millisecond))
 	return views, strings.Join(errs, "; ")
 }
 
@@ -388,8 +394,10 @@ func (s *Server) loadGrafanaUsers() ([]grafanaUserView, string) {
 	if s.grafana == nil {
 		return nil, "grafana client not configured"
 	}
+	start := time.Now()
 	users, err := s.grafana.ListAdminUsers()
 	if err != nil {
+		log.Printf("ui: grafana users fetch failed: %v", err)
 		return nil, err.Error()
 	}
 	views := make([]grafanaUserView, 0, len(users))
@@ -404,6 +412,7 @@ func (s *Server) loadGrafanaUsers() ([]grafanaUserView, string) {
 	sort.Slice(views, func(i, j int) bool {
 		return strings.ToLower(views[i].Login) < strings.ToLower(views[j].Login)
 	})
+	log.Printf("ui: grafana users total=%d in %s", len(views), time.Since(start).Round(time.Millisecond))
 	return views, ""
 }
 
@@ -411,10 +420,13 @@ func (s *Server) loadEntraGroups(orgs []store.Org, mappings []store.Mapping) ([]
 	if s.entra == nil {
 		return nil, "entra client not configured"
 	}
+	start := time.Now()
 	groups, err := s.entra.ListGroups()
 	if err != nil {
+		log.Printf("ui: entra groups fetch failed: %v", err)
 		return nil, err.Error()
 	}
+	total := len(groups)
 	orgNames := map[int64]string{}
 	for _, org := range orgs {
 		orgNames[org.ID] = org.Name
@@ -455,6 +467,7 @@ func (s *Server) loadEntraGroups(orgs []store.Org, mappings []store.Mapping) ([]
 	sort.Slice(views, func(i, j int) bool {
 		return strings.ToLower(views[i].DisplayName) < strings.ToLower(views[j].DisplayName)
 	})
+	log.Printf("ui: entra groups filtered=%d total=%d in %s", len(views), total, time.Since(start).Round(time.Millisecond))
 	return views, ""
 }
 
@@ -467,8 +480,10 @@ func (s *Server) loadEntraUsers() ([]entraUserView, string) {
 	if s.entra == nil {
 		return nil, "entra client not configured"
 	}
+	start := time.Now()
 	users, err := s.entra.ListUsers()
 	if err != nil {
+		log.Printf("ui: entra users fetch failed: %v", err)
 		return nil, err.Error()
 	}
 	views := make([]entraUserView, 0, len(users))
@@ -484,6 +499,7 @@ func (s *Server) loadEntraUsers() ([]entraUserView, string) {
 	sort.Slice(views, func(i, j int) bool {
 		return strings.ToLower(views[i].DisplayName) < strings.ToLower(views[j].DisplayName)
 	})
+	log.Printf("ui: entra users total=%d in %s", len(views), time.Since(start).Round(time.Millisecond))
 	return views, ""
 }
 
