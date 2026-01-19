@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -131,6 +132,24 @@ func (s *Store) CreateMapping(m Mapping) (int64, error) {
 func (s *Store) DeleteMapping(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM mappings WHERE id = ?`, id)
 	return err
+}
+
+func (s *Store) DeleteMappingsNotInGroupIDs(groupIDs []string) (int64, error) {
+	if len(groupIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, 0, len(groupIDs))
+	args := make([]any, 0, len(groupIDs))
+	for _, id := range groupIDs {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	query := fmt.Sprintf(`DELETE FROM mappings WHERE external_group_id NOT IN (%s)`, strings.Join(placeholders, ","))
+	res, err := s.db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (s *Store) UpdateMappingTeamID(id int64, teamID int64) error {

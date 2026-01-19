@@ -97,6 +97,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/orgs/delete", s.handleDeleteOrg)
 	mux.HandleFunc("/mappings", s.handleCreateMapping)
 	mux.HandleFunc("/mappings/delete", s.handleDeleteMapping)
+	mux.HandleFunc("/mappings/purge", s.handlePurgeMappings)
 	mux.HandleFunc("/sync/preview", s.handlePreview)
 	mux.HandleFunc("/sync/run", s.handleRun)
 	mux.HandleFunc("/sync/apply", s.handleApply)
@@ -233,6 +234,39 @@ func (s *Server) handleDeleteMapping(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to delete mapping", http.StatusBadRequest)
 		return
 	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handlePurgeMappings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.entra == nil {
+		http.Error(w, "entra client not configured", http.StatusInternalServerError)
+		return
+	}
+	groups, err := s.entra.ListGroups()
+	if err != nil {
+		http.Error(w, "failed to load entra groups", http.StatusInternalServerError)
+		return
+	}
+	allowed := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if matchEntraGroupName(group.DisplayName) {
+			allowed = append(allowed, group.ID)
+		}
+	}
+	if len(allowed) == 0 {
+		http.Error(w, "no matching entra groups found; purge aborted", http.StatusBadRequest)
+		return
+	}
+	deleted, err := s.store.DeleteMappingsNotInGroupIDs(allowed)
+	if err != nil {
+		http.Error(w, "failed to purge mappings", http.StatusInternalServerError)
+		return
+	}
+	log.Printf("ui: purged mappings not in entra filter, deleted=%d", deleted)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

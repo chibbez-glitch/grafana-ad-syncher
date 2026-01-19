@@ -40,6 +40,12 @@ body {
   justify-content: flex-end;
 }
 
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 8px 0 12px;
+}
+
 .site-header h1 {
   margin: 0 0 8px 0;
   font-size: 28px;
