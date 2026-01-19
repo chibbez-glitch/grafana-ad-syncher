@@ -34,6 +34,7 @@ type Action struct {
 	GrafanaOrgID    int64
 	TeamID          int64
 	TeamName        string
+	TeamRole        string
 	UserID          int64
 	Email           string
 	DisplayName     string
@@ -159,7 +160,30 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 				}
 			}
 			if id != 0 {
-				if err := s.grafana.AddUserToTeam(teamID, id); err != nil {
+				if err := s.grafana.AddUserToTeam(teamID, id, action.TeamRole); err != nil {
+					return err
+				}
+			}
+		case "update_team_role":
+			teamID := action.TeamID
+			if teamID == 0 {
+				teamID = teamIDs[teamKey(action.OrgID, action.TeamName)]
+			}
+			if teamID == 0 {
+				return fmt.Errorf("missing team id for %s", action.TeamName)
+			}
+			id := action.UserID
+			if id == 0 {
+				user, found, err := s.grafana.LookupUser(email)
+				if err != nil {
+					return err
+				}
+				if found {
+					id = user.ID
+				}
+			}
+			if id != 0 {
+				if err := s.grafana.UpdateTeamMemberRole(teamID, id, action.TeamRole); err != nil {
 					return err
 				}
 			}
@@ -211,6 +235,9 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 	var actions []store.PlanAction
 	userCache := map[string]*grafana.User{}
 	roleByOrgEmail := map[int64]map[string]string{}
+	addedTeamUsers := map[string]int{}
+	teamRoleByTeamEmail := map[string]map[string]string{}
+	updatedTeamRoles := map[string]struct{}{}
 
 	for _, mapping := range mappings {
 		org, ok := orgByID[mapping.OrgID]
@@ -234,6 +261,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 				OrgID:         org.ID,
 				GrafanaOrgID:  org.GrafanaOrgID,
 				TeamName:      mapping.GrafanaTeamName,
+				TeamRole:      normalizeTeamRole(mapping.TeamRole),
 				ExternalGroupID: mapping.ExternalGroupID,
 			})
 		}
@@ -251,6 +279,12 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 				continue
 			}
 			want[email] = member
+			key := teamKey(org.ID, mapping.GrafanaTeamName)
+			if teamRoleByTeamEmail[key] == nil {
+				teamRoleByTeamEmail[key] = map[string]string{}
+			}
+			current := teamRoleByTeamEmail[key][email]
+			teamRoleByTeamEmail[key][email] = maxTeamRole(current, normalizeTeamRole(mapping.TeamRole))
 		}
 
 		have := make(map[string]grafana.User)
@@ -330,17 +364,50 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			roleByOrgEmail[org.ID][email] = maxRole(roleByOrgEmail[org.ID][email], role)
 
 			if _, inTeam := have[email]; !inTeam {
-				actions = append(actions, store.PlanAction{
-					ActionType:    "add_user_to_team",
-					OrgID:         org.ID,
-					GrafanaOrgID:  org.GrafanaOrgID,
-					TeamID:        teamID,
-					TeamName:      mapping.GrafanaTeamName,
-					UserID:        userID(user),
-					Email:         email,
-					Role:          role,
-					ExternalGroupID: mapping.ExternalGroupID,
-				})
+				key := teamKey(org.ID, mapping.GrafanaTeamName)
+				teamUserKey := key + ":" + email
+				teamRole := teamRoleByTeamEmail[key][email]
+				if teamRole == "" {
+					teamRole = "member"
+				}
+				if idx, exists := addedTeamUsers[teamUserKey]; exists {
+					if maxTeamRole(actions[idx].TeamRole, teamRole) != actions[idx].TeamRole {
+						actions[idx].TeamRole = teamRole
+					}
+				} else {
+					actions = append(actions, store.PlanAction{
+						ActionType:    "add_user_to_team",
+						OrgID:         org.ID,
+						GrafanaOrgID:  org.GrafanaOrgID,
+						TeamID:        teamID,
+						TeamName:      mapping.GrafanaTeamName,
+						TeamRole:      teamRole,
+						UserID:        userID(user),
+						Email:         email,
+						Role:          role,
+						ExternalGroupID: mapping.ExternalGroupID,
+					})
+					addedTeamUsers[teamUserKey] = len(actions) - 1
+				}
+			} else {
+				teamRole := teamRoleByTeamEmail[teamKey(org.ID, mapping.GrafanaTeamName)][email]
+				if teamRole == "admin" {
+					updateKey := teamKey(org.ID, mapping.GrafanaTeamName) + ":" + email
+					if _, exists := updatedTeamRoles[updateKey]; !exists {
+						actions = append(actions, store.PlanAction{
+							ActionType:    "update_team_role",
+							OrgID:         org.ID,
+							GrafanaOrgID:  org.GrafanaOrgID,
+							TeamID:        teamID,
+							TeamName:      mapping.GrafanaTeamName,
+							TeamRole:      teamRole,
+							UserID:        userID(user),
+							Email:         email,
+							ExternalGroupID: mapping.ExternalGroupID,
+						})
+						updatedTeamRoles[updateKey] = struct{}{}
+					}
+				}
 			}
 		}
 
@@ -443,6 +510,25 @@ func maxRole(current, candidate string) string {
 	return current
 }
 
+func normalizeTeamRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "admin":
+		return "admin"
+	default:
+		return "member"
+	}
+}
+
+func maxTeamRole(current, candidate string) string {
+	if strings.ToLower(candidate) == "admin" {
+		return "admin"
+	}
+	if current == "" {
+		return "member"
+	}
+	return current
+}
+
 func sortActions(actions []store.PlanAction) {
 	order := map[string]int{
 		"create_team":          1,
@@ -450,7 +536,8 @@ func sortActions(actions []store.PlanAction) {
 		"add_user_to_org":      3,
 		"update_user_role":     4,
 		"add_user_to_team":     5,
-		"remove_user_from_team": 6,
+		"update_team_role":     6,
+		"remove_user_from_team": 7,
 	}
 	sort.SliceStable(actions, func(i, j int) bool {
 		return order[actions[i].ActionType] < order[actions[j].ActionType]

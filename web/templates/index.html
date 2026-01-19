@@ -71,7 +71,8 @@
         <th>Team ID</th>
         <th>Entra Group ID</th>
         <th>Entra Group Name</th>
-        <th>Role</th>
+        <th>Team Role</th>
+        <th>Org Role</th>
         <th></th>
       </tr>
     </thead>
@@ -84,6 +85,7 @@
         <td>{{.GrafanaTeamID}}</td>
         <td>{{.ExternalGroupID}}</td>
         <td>{{.ExternalGroupName}}</td>
+        <td>{{if .TeamRole}}{{.TeamRole}}{{else}}member{{end}}</td>
         <td>{{if .RoleOverride}}{{.RoleOverride}}{{else}}(org default){{end}}</td>
         <td>
           <form action="/mappings/delete" method="post">
@@ -94,7 +96,7 @@
       </tr>
       {{else}}
       <tr>
-        <td colspan="8" class="muted">No mappings yet.</td>
+        <td colspan="9" class="muted">No mappings yet.</td>
       </tr>
       {{end}}
     </tbody>
@@ -104,26 +106,48 @@
   <form action="/mappings" method="post" class="grid">
     <label>
       <span>Org</span>
-      <select name="org_id" required>
+      <select name="org_id" required data-role="org-select">
         {{range .Orgs}}
-        <option value="{{.ID}}">{{.GrafanaOrgID}} - {{.Name}}</option>
+        <option value="{{.ID}}" data-grafana-org="{{.GrafanaOrgID}}">{{.GrafanaOrgID}} - {{.Name}}</option>
         {{end}}
       </select>
     </label>
     <label>
       <span>Grafana Team Name</span>
-      <input type="text" name="grafana_team_name" required />
+      <select name="grafana_team_name" required data-role="team-select">
+        <option value="">Select team...</option>
+        {{range .GrafanaTeams}}
+        <option value="{{.TeamName}}" data-org="{{.OrgID}}">{{.OrgID}} - {{.TeamName}}</option>
+        {{end}}
+      </select>
     </label>
     <label>
       <span>Entra Group ID</span>
-      <input type="text" name="external_group_id" required />
+      <select name="external_group_id" required data-role="group-id-select">
+        <option value="">Select group...</option>
+        {{range .EntraGroups}}
+        <option value="{{.ID}}" data-name="{{.DisplayName}}">{{.ID}}</option>
+        {{end}}
+      </select>
     </label>
     <label>
       <span>Entra Group Name</span>
-      <input type="text" name="external_group_name" />
+      <select name="external_group_name" data-role="group-name-select">
+        <option value="">Select group...</option>
+        {{range .EntraGroups}}
+        <option value="{{.DisplayName}}" data-id="{{.ID}}">{{.DisplayName}}</option>
+        {{end}}
+      </select>
     </label>
     <label>
-      <span>Role Override</span>
+      <span>Team Role</span>
+      <select name="team_role">
+        <option value="member">Member</option>
+        <option value="admin">Admin</option>
+      </select>
+    </label>
+    <label>
+      <span>Org Role Override</span>
       <select name="role_override">
         <option value="">(org default)</option>
         <option>Viewer</option>
@@ -136,7 +160,7 @@
 </section>
 
 <section class="card">
-  <h2>Grafana Teams</h2>
+  <h2>Grafana Teams <span class="count">{{len .GrafanaTeams}}</span></h2>
   {{if .GrafanaTeamsErr}}
   <p class="muted">Grafana team list error: {{.GrafanaTeamsErr}}</p>
   {{end}}
@@ -146,6 +170,7 @@
         <th>Org</th>
         <th>Team</th>
         <th>Team ID</th>
+        <th>Members</th>
         <th>Mapping</th>
         <th>Entra Group</th>
       </tr>
@@ -154,14 +179,19 @@
       {{range .GrafanaTeams}}
       <tr>
         <td>{{.OrgID}} - {{.OrgName}}</td>
-        <td>{{.TeamName}}</td>
+        <td>
+          <button type="button" class="link" data-team="{{.TeamName}}" data-group-ids="{{.GroupIDsCSV}}">
+            {{.TeamName}}
+          </button>
+        </td>
         <td>{{.TeamID}}</td>
+        <td>{{.MemberCount}}</td>
         <td>{{.MappingState}}</td>
         <td>{{if .MappingInfo}}{{.MappingInfo}}{{else}}-{{end}}</td>
       </tr>
       {{else}}
       <tr>
-        <td colspan="5" class="muted">No teams found.</td>
+        <td colspan="6" class="muted">No teams found.</td>
       </tr>
       {{end}}
     </tbody>
@@ -169,7 +199,7 @@
 </section>
 
 <section class="card">
-  <h2>Grafana Users</h2>
+  <h2>Grafana Users <span class="count">{{len .GrafanaUsers}}</span></h2>
   {{if .GrafanaUsersErr}}
   <p class="muted">Grafana user list error: {{.GrafanaUsersErr}}</p>
   {{end}}
@@ -200,7 +230,7 @@
 </section>
 
 <section class="card">
-  <h2>Entra Groups</h2>
+  <h2>Entra Groups <span class="count">{{len .EntraGroups}}</span></h2>
   {{if .EntraGroupsErr}}
   <p class="muted">Entra group list error: {{.EntraGroupsErr}}</p>
   {{end}}
@@ -245,7 +275,7 @@
         <th>Name</th>
         <th>UPN</th>
         <th>Mail</th>
-        <th>Enabled</th>
+        <th>Department</th>
       </tr>
     </thead>
     <tbody>
@@ -254,7 +284,7 @@
         <td>{{.DisplayName}}</td>
         <td>{{.UPN}}</td>
         <td>{{.Mail}}</td>
-        <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
+        <td>{{.Department}}</td>
       </tr>
       {{else}}
       <tr>
@@ -265,37 +295,170 @@
   </table>
 </section>
 
+<dialog class="modal" id="members-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="members-title">Team Members</h3>
+      <button type="button" class="ghost" data-modal-close>Close</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead>
+          <tr>
+            <th>Display Name</th>
+            <th>UPN</th>
+            <th>Department</th>
+            <th>Email</th>
+          </tr>
+        </thead>
+        <tbody id="members-body">
+          <tr>
+            <td colspan="4" class="muted">Select a mapped team to view members.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  (function () {
+    const orgSelect = document.querySelector('[data-role="org-select"]');
+    const teamSelect = document.querySelector('[data-role="team-select"]');
+    const groupIdSelect = document.querySelector('[data-role="group-id-select"]');
+    const groupNameSelect = document.querySelector('[data-role="group-name-select"]');
+
+    const filterTeams = () => {
+      if (!orgSelect || !teamSelect) return;
+      const orgLabel = orgSelect.options[orgSelect.selectedIndex];
+      const orgID = orgLabel ? orgLabel.dataset.grafanaOrg : "";
+      Array.from(teamSelect.options).forEach((opt) => {
+        if (!opt.value) return;
+        opt.hidden = orgID && opt.dataset.org !== orgID;
+      });
+      if (teamSelect.selectedOptions.length && teamSelect.selectedOptions[0].hidden) {
+        teamSelect.value = "";
+      }
+    };
+
+    const syncGroupSelects = (source, target, dataKey) => {
+      if (!source || !target) return;
+      const selected = source.selectedOptions[0];
+      if (!selected || !selected.value) return;
+      const match = Array.from(target.options).find((opt) => opt.dataset[dataKey] === selected.value);
+      if (match) {
+        target.value = match.value;
+      }
+    };
+
+    if (orgSelect) {
+      orgSelect.addEventListener("change", filterTeams);
+      filterTeams();
+    }
+    if (groupIdSelect && groupNameSelect) {
+      groupIdSelect.addEventListener("change", () => syncGroupSelects(groupIdSelect, groupNameSelect, "id"));
+      groupNameSelect.addEventListener("change", () => syncGroupSelects(groupNameSelect, groupIdSelect, "name"));
+    }
+
+    const modal = document.getElementById("members-modal");
+    const membersBody = document.getElementById("members-body");
+    const membersTitle = document.getElementById("members-title");
+    const closeButtons = document.querySelectorAll("[data-modal-close]");
+
+    const renderMembers = (rows) => {
+      membersBody.innerHTML = "";
+      if (!rows.length) {
+        const row = document.createElement("tr");
+        row.innerHTML = '<td colspan="4" class="muted">No members found.</td>';
+        membersBody.appendChild(row);
+        return;
+      }
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${row.displayName || ""}</td><td>${row.upn || ""}</td><td>${row.department || ""}</td><td>${row.mail || ""}</td>`;
+        membersBody.appendChild(tr);
+      });
+    };
+
+    document.querySelectorAll('[data-team]').forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const groupIDs = (btn.dataset.groupIds || "").split(",").filter(Boolean);
+        if (!modal) return;
+        membersTitle.textContent = `Team Members: ${btn.dataset.team}`;
+        if (groupIDs.length !== 1) {
+          membersBody.innerHTML = '<tr><td colspan="4" class="muted">Members available only when exactly one Entra group is mapped.</td></tr>';
+          if (modal.showModal) modal.showModal();
+          return;
+        }
+        membersBody.innerHTML = '<tr><td colspan="4" class="muted">Loading...</td></tr>';
+        if (modal.showModal) modal.showModal();
+        try {
+          const resp = await fetch(`/entra/group/members?group_id=${encodeURIComponent(groupIDs[0])}`);
+          if (!resp.ok) {
+            renderMembers([]);
+            return;
+          }
+          const data = await resp.json();
+          renderMembers(data);
+        } catch (err) {
+          renderMembers([]);
+        }
+      });
+    });
+
+    closeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (modal && modal.close) modal.close();
+      });
+    });
+  })();
+</script>
+
 {{if .Plan}}
 <section class="card">
-  <h2>Planned Actions</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Type</th>
-        <th>Org</th>
-        <th>Team</th>
-        <th>Email</th>
-        <th>Role</th>
-        <th>Note</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Plan.Actions}}
-      <tr>
-        <td>{{.ActionType}}</td>
-        <td>{{.GrafanaOrgID}}</td>
-        <td>{{.TeamName}}</td>
-        <td>{{.Email}}</td>
-        <td>{{.Role}}</td>
-        <td>{{.Note}}</td>
-      </tr>
-      {{else}}
-      <tr>
-        <td colspan="6" class="muted">No actions in plan.</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
+  <h2>Planned Actions (Grouped)</h2>
+  <form action="/sync/apply-selected" method="post">
+    {{if .PlanGroups}}
+    {{range .PlanGroups}}
+    <div class="group-block">
+      <h3>{{.Title}}</h3>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Action</th>
+            <th>Email</th>
+            <th>Org Role</th>
+            <th>Team Role</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Actions}}
+          <tr class="{{.Class}}">
+            <td>
+              <input type="checkbox" name="action_id" value="{{.ID}}" {{if not .Selectable}}disabled{{end}} />
+            </td>
+            <td>{{actionLabel .Type}}</td>
+            <td>{{.Email}}</td>
+            <td>{{.Role}}</td>
+            <td>{{.TeamRole}}</td>
+            <td>{{.Note}}</td>
+          </tr>
+          {{else}}
+          <tr>
+            <td colspan="6" class="muted">No actions in this group.</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+    <button type="submit" class="primary">Apply selected</button>
+    {{else}}
+    <p class="muted">No actions in plan.</p>
+    {{end}}
+  </form>
 </section>
 {{end}}
 {{end}}

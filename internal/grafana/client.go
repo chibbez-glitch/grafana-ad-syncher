@@ -201,11 +201,27 @@ func (c *Client) ListOrgUsers(orgID int64) ([]OrgUser, error) {
 	return users, nil
 }
 
-func (c *Client) AddUserToTeam(teamID, userID int64) error {
+func (c *Client) AddUserToTeam(teamID, userID int64, role string) error {
 	endpoint := fmt.Sprintf("%s/api/teams/%d/members", c.baseURL, teamID)
-	payload := map[string]int64{"userId": userID}
+	payload := map[string]any{"userId": userID}
+	if strings.EqualFold(role, "admin") {
+		payload["role"] = "Admin"
+	}
 	status, err := c.doJSON("POST", endpoint, payload, nil)
 	if err != nil && status != http.StatusConflict {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) UpdateTeamMemberRole(teamID, userID int64, role string) error {
+	endpoint := fmt.Sprintf("%s/api/teams/%d/members/%d", c.baseURL, teamID, userID)
+	payload := map[string]string{"role": "Member"}
+	if strings.EqualFold(role, "admin") {
+		payload["role"] = "Admin"
+	}
+	status, err := c.doJSON("PUT", endpoint, payload, nil)
+	if err != nil && status != http.StatusNotFound {
 		return err
 	}
 	return nil

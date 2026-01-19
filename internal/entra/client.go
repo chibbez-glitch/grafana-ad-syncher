@@ -31,6 +31,7 @@ type Member struct {
 	DisplayName string `json:"displayName"`
 	Mail        string `json:"mail"`
 	UPN         string `json:"userPrincipalName"`
+	Department  string `json:"department"`
 }
 
 type Group struct {
@@ -66,7 +67,7 @@ func (c *Client) ListGroupMembers(groupID string) ([]Member, error) {
 		return nil, err
 	}
 
-	endpoint := fmt.Sprintf("%s/groups/%s/members?$select=id,displayName,mail,userPrincipalName", c.graphBase, url.PathEscape(groupID))
+	endpoint := fmt.Sprintf("%s/groups/%s/members?$select=id,displayName,mail,userPrincipalName,department", c.graphBase, url.PathEscape(groupID))
 	var members []Member
 	for endpoint != "" {
 		resp, err := c.doRequest("GET", endpoint, token, nil)

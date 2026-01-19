@@ -28,6 +28,7 @@ type Mapping struct {
 	GrafanaTeamID     int64
 	ExternalGroupID   string
 	ExternalGroupName string
+	TeamRole          string
 	RoleOverride      string
 }
 
@@ -46,6 +47,7 @@ type PlanAction struct {
 	GrafanaOrgID   int64
 	TeamID         int64
 	TeamName       string
+	TeamRole       string
 	UserID         int64
 	Email          string
 	DisplayName    string
@@ -103,7 +105,7 @@ func (s *Store) DeleteOrg(id int64) error {
 }
 
 func (s *Store) ListMappings() ([]Mapping, error) {
-	rows, err := s.db.Query(`SELECT id, org_id, grafana_team_name, grafana_team_id, external_group_id, external_group_name, role_override FROM mappings ORDER BY id`)
+	rows, err := s.db.Query(`SELECT id, org_id, grafana_team_name, grafana_team_id, external_group_id, external_group_name, team_role, role_override FROM mappings ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +114,7 @@ func (s *Store) ListMappings() ([]Mapping, error) {
 	var mappings []Mapping
 	for rows.Next() {
 		var m Mapping
-		if err := rows.Scan(&m.ID, &m.OrgID, &m.GrafanaTeamName, &m.GrafanaTeamID, &m.ExternalGroupID, &m.ExternalGroupName, &m.RoleOverride); err != nil {
+		if err := rows.Scan(&m.ID, &m.OrgID, &m.GrafanaTeamName, &m.GrafanaTeamID, &m.ExternalGroupID, &m.ExternalGroupName, &m.TeamRole, &m.RoleOverride); err != nil {
 			return nil, err
 		}
 		mappings = append(mappings, m)
@@ -121,8 +123,8 @@ func (s *Store) ListMappings() ([]Mapping, error) {
 }
 
 func (s *Store) CreateMapping(m Mapping) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO mappings (org_id, grafana_team_name, grafana_team_id, external_group_id, external_group_name, role_override) VALUES (?, ?, ?, ?, ?, ?)`,
-		m.OrgID, m.GrafanaTeamName, m.GrafanaTeamID, m.ExternalGroupID, m.ExternalGroupName, m.RoleOverride)
+	res, err := s.db.Exec(`INSERT INTO mappings (org_id, grafana_team_name, grafana_team_id, external_group_id, external_group_name, team_role, role_override) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		m.OrgID, m.GrafanaTeamName, m.GrafanaTeamID, m.ExternalGroupID, m.ExternalGroupName, m.TeamRole, m.RoleOverride)
 	if err != nil {
 		return 0, err
 	}
@@ -185,14 +187,14 @@ func (s *Store) ReplacePlan(plan Plan) (int64, error) {
 		_ = tx.Rollback()
 		return 0, err
 	}
-	stmt, err := tx.Prepare(`INSERT INTO plan_actions (plan_id, action_type, org_id, grafana_org_id, team_id, team_name, user_id, email, display_name, role, external_group_id, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+	stmt, err := tx.Prepare(`INSERT INTO plan_actions (plan_id, action_type, org_id, grafana_org_id, team_id, team_name, team_role, user_id, email, display_name, role, external_group_id, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		_ = tx.Rollback()
 		return 0, err
 	}
 	defer stmt.Close()
 	for _, action := range plan.Actions {
-		if _, err := stmt.Exec(planID, action.ActionType, action.OrgID, action.GrafanaOrgID, action.TeamID, action.TeamName, action.UserID, action.Email, action.DisplayName, action.Role, action.ExternalGroupID, action.Note); err != nil {
+		if _, err := stmt.Exec(planID, action.ActionType, action.OrgID, action.GrafanaOrgID, action.TeamID, action.TeamName, action.TeamRole, action.UserID, action.Email, action.DisplayName, action.Role, action.ExternalGroupID, action.Note); err != nil {
 			_ = tx.Rollback()
 			return 0, err
 		}
@@ -228,14 +230,14 @@ func (s *Store) LatestPlan() (*Plan, error) {
 		}
 		return nil, err
 	}
-	rows, err := s.db.Query(`SELECT id, plan_id, action_type, org_id, grafana_org_id, team_id, team_name, user_id, email, display_name, role, external_group_id, note FROM plan_actions WHERE plan_id = ? ORDER BY id`, plan.ID)
+	rows, err := s.db.Query(`SELECT id, plan_id, action_type, org_id, grafana_org_id, team_id, team_name, team_role, user_id, email, display_name, role, external_group_id, note FROM plan_actions WHERE plan_id = ? ORDER BY id`, plan.ID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var action PlanAction
-		if err := rows.Scan(&action.ID, &action.PlanID, &action.ActionType, &action.OrgID, &action.GrafanaOrgID, &action.TeamID, &action.TeamName, &action.UserID, &action.Email, &action.DisplayName, &action.Role, &action.ExternalGroupID, &action.Note); err != nil {
+		if err := rows.Scan(&action.ID, &action.PlanID, &action.ActionType, &action.OrgID, &action.GrafanaOrgID, &action.TeamID, &action.TeamName, &action.TeamRole, &action.UserID, &action.Email, &action.DisplayName, &action.Role, &action.ExternalGroupID, &action.Note); err != nil {
 			return nil, err
 		}
 		plan.Actions = append(plan.Actions, action)
@@ -266,6 +268,7 @@ func migrate(db *sql.DB) error {
 			grafana_team_id INTEGER NOT NULL DEFAULT 0,
 			external_group_id TEXT NOT NULL,
 			external_group_name TEXT,
+			team_role TEXT NOT NULL DEFAULT 'member',
 			role_override TEXT,
 			updated_at TEXT,
 			FOREIGN KEY(org_id) REFERENCES orgs(id)
@@ -284,6 +287,7 @@ func migrate(db *sql.DB) error {
 			grafana_org_id INTEGER,
 			team_id INTEGER,
 			team_name TEXT,
+			team_role TEXT,
 			user_id INTEGER,
 			email TEXT,
 			display_name TEXT,
@@ -298,6 +302,23 @@ func migrate(db *sql.DB) error {
 		if _, err := db.Exec(q); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	if err := addColumnIfMissing(db, "mappings", "team_role TEXT NOT NULL DEFAULT 'member'"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(db, "plan_actions", "team_role TEXT"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func addColumnIfMissing(db *sql.DB, table, definition string) error {
+	_, err := db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s", table, definition))
+	if err != nil {
+		if strings.Contains(err.Error(), "duplicate column name") {
+			return nil
+		}
+		return fmt.Errorf("migrate add column %s.%s: %w", table, definition, err)
 	}
 	return nil
 }

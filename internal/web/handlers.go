@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"log"
@@ -30,6 +31,8 @@ type grafanaTeamView struct {
 	OrgName      string
 	TeamID       int64
 	TeamName     string
+	MemberCount  int
+	GroupIDsCSV  string
 	MappingInfo  string
 	MappingState string
 }
@@ -55,7 +58,7 @@ type entraUserView struct {
 	DisplayName string
 	Mail        string
 	UPN         string
-	Enabled     bool
+	Department  string
 }
 
 type pageData struct {
@@ -69,13 +72,36 @@ type pageData struct {
 	EntraGroupsErr   string
 	EntraUsers       []entraUserView
 	EntraUsersErr    string
+	PlanGroups       []planTeamGroup
 	LastRun          string
 	LastStatus       string
 	Plan             *store.Plan
 }
 
+type planActionView struct {
+	ID         int64
+	Type       string
+	OrgID      int64
+	Team       string
+	Email      string
+	Role       string
+	TeamRole   string
+	Note       string
+	Class      string
+	Selectable bool
+}
+
+type planTeamGroup struct {
+	Title   string
+	Actions []planActionView
+}
+
 func New(store *store.Store, syncer *syncer.Syncer, grafanaClient *grafana.Client, entraClient *entra.Client, templateDir string) (*Server, error) {
-	tmpl, err := template.ParseFiles(
+	tmpl, err := template.New("layout.html").Funcs(template.FuncMap{
+		"actionClass":  actionClass,
+		"actionLabel":  actionLabel,
+		"isSelectable": isSelectableAction,
+	}).ParseFiles(
 		filepath.Join(templateDir, "layout.html"),
 		filepath.Join(templateDir, "index.html"),
 	)
@@ -98,9 +124,11 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/mappings", s.handleCreateMapping)
 	mux.HandleFunc("/mappings/delete", s.handleDeleteMapping)
 	mux.HandleFunc("/mappings/purge", s.handlePurgeMappings)
+	mux.HandleFunc("/entra/group/members", s.handleEntraGroupMembers)
 	mux.HandleFunc("/sync/preview", s.handlePreview)
 	mux.HandleFunc("/sync/run", s.handleRun)
 	mux.HandleFunc("/sync/apply", s.handleApply)
+	mux.HandleFunc("/sync/apply-selected", s.handleApplySelected)
 	mux.HandleFunc("/sync/clear", s.handleClearPlan)
 }
 
@@ -127,9 +155,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	grafanaTeams, grafanaTeamsErr := s.loadGrafanaTeams(orgs, mappings)
-	grafanaUsers, grafanaUsersErr := s.loadGrafanaUsers()
+	grafanaUsers, grafanaUsersErr := s.loadGrafanaUsers(orgs)
 	entraGroups, entraGroupsErr := s.loadEntraGroups(orgs, mappings)
 	entraUsers, entraUsersErr := s.loadEntraUsers()
+	var planGroups []planTeamGroup
+	if plan != nil {
+		planGroups = buildPlanGroups(plan.Actions)
+	}
 	lastRun, lastStatus := s.syncer.LastRun()
 	data := pageData{
 		Orgs:            orgs,
@@ -142,6 +174,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		EntraGroupsErr:  entraGroupsErr,
 		EntraUsers:      entraUsers,
 		EntraUsersErr:   entraUsersErr,
+		PlanGroups:      planGroups,
 		LastRun:         formatTime(lastRun),
 		LastStatus:      lastStatus,
 		Plan:            plan,
@@ -205,12 +238,17 @@ func (s *Server) handleCreateMapping(w http.ResponseWriter, r *http.Request) {
 	teamName := r.FormValue("grafana_team_name")
 	externalGroupID := r.FormValue("external_group_id")
 	externalGroupName := r.FormValue("external_group_name")
+	teamRole := strings.ToLower(strings.TrimSpace(r.FormValue("team_role")))
+	if teamRole != "admin" {
+		teamRole = "member"
+	}
 	roleOverride := r.FormValue("role_override")
 	_, err := s.store.CreateMapping(store.Mapping{
 		OrgID:             orgID,
 		GrafanaTeamName:   teamName,
 		ExternalGroupID:   externalGroupID,
 		ExternalGroupName: externalGroupName,
+		TeamRole:          teamRole,
 		RoleOverride:      roleOverride,
 	})
 	if err != nil {
@@ -344,6 +382,62 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) handleApplySelected(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	ids := r.Form["action_id"]
+	if len(ids) == 0 {
+		http.Error(w, "no actions selected", http.StatusBadRequest)
+		return
+	}
+	plan, err := s.store.LatestPlan()
+	if err != nil {
+		http.Error(w, "failed to load plan", http.StatusInternalServerError)
+		return
+	}
+	if plan == nil {
+		http.Error(w, "no plan available", http.StatusBadRequest)
+		return
+	}
+	allowed := map[int64]struct{}{}
+	for _, raw := range ids {
+		if id, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			allowed[id] = struct{}{}
+		}
+	}
+	var selected []store.PlanAction
+	for _, action := range plan.Actions {
+		if _, ok := allowed[action.ID]; ok {
+			if !isSelectableAction(action.ActionType) {
+				continue
+			}
+			selected = append(selected, action)
+		}
+	}
+	if len(selected) == 0 {
+		http.Error(w, "no valid actions selected", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.UpdatePlanStatus(plan.ID, "applying-selected"); err != nil {
+		log.Printf("plan status update failed: %v", err)
+	}
+	err = s.syncer.ApplyPlan(selected)
+	s.syncer.RecordRun(err)
+	if err != nil {
+		_ = s.store.UpdatePlanStatus(plan.ID, "failed")
+		http.Error(w, "apply failed", http.StatusInternalServerError)
+		return
+	}
+	_ = s.store.UpdatePlanStatus(plan.ID, "applied-selected")
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
 func (s *Server) handleClearPlan(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -399,6 +493,21 @@ func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([
 			if len(mapped) == 0 {
 				mapped = byName[fmt.Sprintf("%d:%s", org.ID, strings.ToLower(team.Name))]
 			}
+			var groupIDs []string
+			for _, entry := range mapped {
+				if entry.ExternalGroupID != "" {
+					groupIDs = append(groupIDs, entry.ExternalGroupID)
+				}
+			}
+			memberCount := 0
+			if team.ID > 0 {
+				members, err := s.grafana.ListTeamMembers(team.ID)
+				if err != nil {
+					log.Printf("ui: grafana team members fetch failed team=%d: %v", team.ID, err)
+				} else {
+					memberCount = len(members)
+				}
+			}
 			info := mappingGroupsSummary(mapped)
 			state := "unmapped"
 			if info != "" {
@@ -409,6 +518,8 @@ func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([
 				OrgName:      org.Name,
 				TeamID:       team.ID,
 				TeamName:     team.Name,
+				MemberCount:  memberCount,
+				GroupIDsCSV:  strings.Join(groupIDs, ","),
 				MappingInfo:  info,
 				MappingState: state,
 			})
@@ -424,15 +535,42 @@ func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([
 	return views, strings.Join(errs, "; ")
 }
 
-func (s *Server) loadGrafanaUsers() ([]grafanaUserView, string) {
+func (s *Server) loadGrafanaUsers(orgs []store.Org) ([]grafanaUserView, string) {
 	if s.grafana == nil {
 		return nil, "grafana client not configured"
 	}
 	start := time.Now()
 	users, err := s.grafana.ListAdminUsers()
 	if err != nil {
-		log.Printf("ui: grafana users fetch failed: %v", err)
-		return nil, err.Error()
+		log.Printf("ui: grafana admin users fetch failed: %v", err)
+		userByID := map[int64]grafanaUserView{}
+		for _, org := range orgs {
+			orgUsers, err := s.grafana.ListOrgUsers(org.GrafanaOrgID)
+			if err != nil {
+				log.Printf("ui: grafana org users fetch failed org=%d: %v", org.GrafanaOrgID, err)
+				continue
+			}
+			for _, user := range orgUsers {
+				if user.ID == 0 {
+					continue
+				}
+				userByID[user.ID] = grafanaUserView{
+					ID:    user.ID,
+					Login: user.Login,
+					Email: user.Email,
+					Name:  user.Name,
+				}
+			}
+		}
+		views := make([]grafanaUserView, 0, len(userByID))
+		for _, view := range userByID {
+			views = append(views, view)
+		}
+		sort.Slice(views, func(i, j int) bool {
+			return strings.ToLower(views[i].Login) < strings.ToLower(views[j].Login)
+		})
+		log.Printf("ui: grafana users total=%d in %s (org fallback)", len(views), time.Since(start).Round(time.Millisecond))
+		return views, ""
 	}
 	views := make([]grafanaUserView, 0, len(users))
 	for _, user := range users {
@@ -515,26 +653,86 @@ func (s *Server) loadEntraUsers() ([]entraUserView, string) {
 		return nil, "entra client not configured"
 	}
 	start := time.Now()
-	users, err := s.entra.ListUsers()
+	groups, err := s.entra.ListGroups()
 	if err != nil {
-		log.Printf("ui: entra users fetch failed: %v", err)
+		log.Printf("ui: entra users list groups failed: %v", err)
 		return nil, err.Error()
 	}
-	views := make([]entraUserView, 0, len(users))
-	for _, user := range users {
+	seen := map[string]entra.Member{}
+	for _, group := range groups {
+		if !matchEntraGroupName(group.DisplayName) {
+			continue
+		}
+		members, err := s.entra.ListGroupMembers(group.ID)
+		if err != nil {
+			log.Printf("ui: entra members fetch failed group=%s: %v", group.ID, err)
+			continue
+		}
+		for _, member := range members {
+			if member.ID == "" {
+				continue
+			}
+			seen[member.ID] = member
+		}
+	}
+	views := make([]entraUserView, 0, len(seen))
+	for _, member := range seen {
 		views = append(views, entraUserView{
-			ID:          user.ID,
-			DisplayName: user.DisplayName,
-			Mail:        user.Mail,
-			UPN:         user.UPN,
-			Enabled:     user.AccountEnabled,
+			ID:          member.ID,
+			DisplayName: member.DisplayName,
+			Mail:        member.Mail,
+			UPN:         member.UPN,
+			Department:  member.Department,
 		})
 	}
 	sort.Slice(views, func(i, j int) bool {
 		return strings.ToLower(views[i].DisplayName) < strings.ToLower(views[j].DisplayName)
 	})
-	log.Printf("ui: entra users total=%d in %s", len(views), time.Since(start).Round(time.Millisecond))
+	log.Printf("ui: entra users filtered=%d in %s", len(views), time.Since(start).Round(time.Millisecond))
 	return views, ""
+}
+
+func (s *Server) handleEntraGroupMembers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.entra == nil {
+		http.Error(w, "entra client not configured", http.StatusInternalServerError)
+		return
+	}
+	groupID := strings.TrimSpace(r.URL.Query().Get("group_id"))
+	if groupID == "" {
+		http.Error(w, "missing group_id", http.StatusBadRequest)
+		return
+	}
+	members, err := s.entra.ListGroupMembers(groupID)
+	if err != nil {
+		http.Error(w, "failed to list group members", http.StatusInternalServerError)
+		return
+	}
+	type memberView struct {
+		DisplayName string `json:"displayName"`
+		UPN         string `json:"upn"`
+		Department  string `json:"department"`
+		Mail        string `json:"mail"`
+	}
+	result := make([]memberView, 0, len(members))
+	for _, member := range members {
+		result = append(result, memberView{
+			DisplayName: member.DisplayName,
+			UPN:         member.UPN,
+			Department:  member.Department,
+			Mail:        member.Mail,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return strings.ToLower(result[i].DisplayName) < strings.ToLower(result[j].DisplayName)
+	})
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		log.Printf("ui: members encode failed: %v", err)
+	}
 }
 
 func mappingGroupsSummary(mappings []store.Mapping) string {
@@ -573,4 +771,88 @@ func mappingTeamsSummary(mappings []store.Mapping, orgNames map[int64]string) st
 	}
 	sort.Strings(values)
 	return strings.Join(values, ", ")
+}
+
+func buildPlanGroups(actions []store.PlanAction) []planTeamGroup {
+	type group struct {
+		title   string
+		actions []planActionView
+	}
+	groups := map[string]*group{}
+	order := []string{}
+	for _, action := range actions {
+		title := action.TeamName
+		if title == "" {
+			if action.GrafanaOrgID != 0 {
+				title = fmt.Sprintf("Org %d", action.GrafanaOrgID)
+			} else {
+				title = "Org actions"
+			}
+		}
+		if groups[title] == nil {
+			groups[title] = &group{title: title}
+			order = append(order, title)
+		}
+		groups[title].actions = append(groups[title].actions, planActionView{
+			ID:         action.ID,
+			Type:       action.ActionType,
+			OrgID:      action.GrafanaOrgID,
+			Team:       action.TeamName,
+			Email:      action.Email,
+			Role:       action.Role,
+			TeamRole:   action.TeamRole,
+			Note:       action.Note,
+			Class:      actionClass(action.ActionType),
+			Selectable: isSelectableAction(action.ActionType),
+		})
+	}
+	var result []planTeamGroup
+	for _, title := range order {
+		g := groups[title]
+		result = append(result, planTeamGroup{Title: g.title, Actions: g.actions})
+	}
+	return result
+}
+
+func actionClass(actionType string) string {
+	switch actionType {
+	case "remove_user_from_team":
+		return "danger"
+	case "blocked_create_user":
+		return "muted"
+	default:
+		return "success"
+	}
+}
+
+func actionLabel(actionType string) string {
+	switch actionType {
+	case "create_team":
+		return "Create team"
+	case "create_user":
+		return "Create user"
+	case "add_user_to_org":
+		return "Add to org"
+	case "update_user_role":
+		return "Update org role"
+	case "add_user_to_team":
+		return "Add to team"
+	case "update_team_role":
+		return "Update team role"
+	case "remove_user_from_team":
+		return "Remove from team"
+	case "blocked_create_user":
+		return "Blocked create user"
+	default:
+		return actionType
+	}
+}
+
+func isSelectableAction(actionType string) bool {
+	switch actionType {
+	case "blocked_create_user":
+		return false
+	default:
+		return true
+	}
 }
