@@ -1,0 +1,166 @@
+{{define "content"}}
+<section class="card">
+  <h2>Grafana Orgs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Grafana Org ID</th>
+        <th>Name</th>
+        <th>Default Role</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Orgs}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.GrafanaOrgID}}</td>
+        <td>{{.Name}}</td>
+        <td>{{.DefaultRole}}</td>
+        <td>
+          <form action="/orgs/delete" method="post">
+            <input type="hidden" name="id" value="{{.ID}}" />
+            <button type="submit" class="ghost">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="5" class="muted">No orgs yet.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <h3>Add org</h3>
+  <form action="/orgs" method="post" class="grid">
+    <label>
+      <span>Grafana Org ID</span>
+      <input type="number" name="grafana_org_id" required />
+    </label>
+    <label>
+      <span>Name</span>
+      <input type="text" name="name" />
+    </label>
+    <label>
+      <span>Default Role</span>
+      <select name="default_role">
+        <option>Viewer</option>
+        <option>Editor</option>
+        <option>Admin</option>
+      </select>
+    </label>
+    <button type="submit" class="primary">Add org</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Group to Team Mappings</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Org</th>
+        <th>Grafana Team</th>
+        <th>Team ID</th>
+        <th>Entra Group ID</th>
+        <th>Entra Group Name</th>
+        <th>Role</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Mappings}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.OrgID}}</td>
+        <td>{{.GrafanaTeamName}}</td>
+        <td>{{.GrafanaTeamID}}</td>
+        <td>{{.ExternalGroupID}}</td>
+        <td>{{.ExternalGroupName}}</td>
+        <td>{{if .RoleOverride}}{{.RoleOverride}}{{else}}(org default){{end}}</td>
+        <td>
+          <form action="/mappings/delete" method="post">
+            <input type="hidden" name="id" value="{{.ID}}" />
+            <button type="submit" class="ghost">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="8" class="muted">No mappings yet.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <h3>Add mapping</h3>
+  <form action="/mappings" method="post" class="grid">
+    <label>
+      <span>Org</span>
+      <select name="org_id" required>
+        {{range .Orgs}}
+        <option value="{{.ID}}">{{.GrafanaOrgID}} - {{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>
+      <span>Grafana Team Name</span>
+      <input type="text" name="grafana_team_name" required />
+    </label>
+    <label>
+      <span>Entra Group ID</span>
+      <input type="text" name="external_group_id" required />
+    </label>
+    <label>
+      <span>Entra Group Name</span>
+      <input type="text" name="external_group_name" />
+    </label>
+    <label>
+      <span>Role Override</span>
+      <select name="role_override">
+        <option value="">(org default)</option>
+        <option>Viewer</option>
+        <option>Editor</option>
+        <option>Admin</option>
+      </select>
+    </label>
+    <button type="submit" class="primary">Add mapping</button>
+  </form>
+</section>
+
+{{if .Plan}}
+<section class="card">
+  <h2>Planned Actions</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Type</th>
+        <th>Org</th>
+        <th>Team</th>
+        <th>Email</th>
+        <th>Role</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Plan.Actions}}
+      <tr>
+        <td>{{.ActionType}}</td>
+        <td>{{.GrafanaOrgID}}</td>
+        <td>{{.TeamName}}</td>
+        <td>{{.Email}}</td>
+        <td>{{.Role}}</td>
+        <td>{{.Note}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="6" class="muted">No actions in plan.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+{{end}}

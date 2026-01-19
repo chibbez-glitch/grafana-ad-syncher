@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Grafana AD/Entra Sync</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <h1>Grafana AD/Entra Sync</h1>
+      <p>Manage orgs, mappings, and run syncs.</p>
+    </div>
+    <div class="sync-actions">
+      <form action="/sync/preview" method="post">
+        <button type="submit" class="primary">Preview sync</button>
+      </form>
+      <form action="/sync/apply" method="post">
+        <button type="submit" class="ghost">Apply plan</button>
+      </form>
+      <div class="status">
+        <span>Last run: {{.LastRun}}</span>
+        <span>Status: {{.LastStatus}}</span>
+        {{if .Plan}}
+        <span>Plan: {{.Plan.CreatedAt}} ({{.Plan.Status}})</span>
+        {{end}}
+      </div>
+    </div>
+  </header>
+
+  <main>
+    {{template "content" .}}
+  </main>
+
+  <footer>
+    <span>Grafana Sync Service</span>
+  </footer>
+</body>
+</html>
