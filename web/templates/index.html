@@ -130,6 +130,136 @@
   </form>
 </section>
 
+<section class="card">
+  <h2>Grafana Teams</h2>
+  {{if .GrafanaTeamsErr}}
+  <p class="muted">Grafana team list error: {{.GrafanaTeamsErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>Org</th>
+        <th>Team</th>
+        <th>Team ID</th>
+        <th>Mapping</th>
+        <th>Entra Group</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .GrafanaTeams}}
+      <tr>
+        <td>{{.OrgID}} - {{.OrgName}}</td>
+        <td>{{.TeamName}}</td>
+        <td>{{.TeamID}}</td>
+        <td>{{.MappingState}}</td>
+        <td>{{if .MappingInfo}}{{.MappingInfo}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="5" class="muted">No teams found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Grafana Users</h2>
+  {{if .GrafanaUsersErr}}
+  <p class="muted">Grafana user list error: {{.GrafanaUsersErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Login</th>
+        <th>Email</th>
+        <th>Name</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .GrafanaUsers}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.Login}}</td>
+        <td>{{.Email}}</td>
+        <td>{{.Name}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="4" class="muted">No users found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Entra Groups</h2>
+  {{if .EntraGroupsErr}}
+  <p class="muted">Entra group list error: {{.EntraGroupsErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Group ID</th>
+        <th>Mail</th>
+        <th>Type</th>
+        <th>Mapping</th>
+        <th>Grafana Team</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .EntraGroups}}
+      <tr>
+        <td>{{.DisplayName}}</td>
+        <td>{{.ID}}</td>
+        <td>{{.Mail}}</td>
+        <td>{{.SecurityType}}</td>
+        <td>{{.MappingState}}</td>
+        <td>{{if .MappingInfo}}{{.MappingInfo}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="6" class="muted">No groups found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Entra Users</h2>
+  {{if .EntraUsersErr}}
+  <p class="muted">Entra user list error: {{.EntraUsersErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>UPN</th>
+        <th>Mail</th>
+        <th>Enabled</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .EntraUsers}}
+      <tr>
+        <td>{{.DisplayName}}</td>
+        <td>{{.UPN}}</td>
+        <td>{{.Mail}}</td>
+        <td>{{if .Enabled}}yes{{else}}no{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="4" class="muted">No users found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
 {{if .Plan}}
 <section class="card">
   <h2>Planned Actions</h2>

@@ -31,6 +31,14 @@ type Team struct {
 	Name string `json:"name"`
 }
 
+type OrgUser struct {
+	ID    int64  `json:"userId"`
+	Login string `json:"login"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+}
+
 func New(baseURL, adminUser, adminPassword, adminToken string) *Client {
 	return &Client{
 		baseURL:       strings.TrimRight(baseURL, "/"),
@@ -139,6 +147,53 @@ func (c *Client) ListTeamMembers(teamID int64) ([]User, error) {
 		return nil, err
 	}
 	return members, nil
+}
+
+func (c *Client) ListTeams(orgID int64) ([]Team, error) {
+	var teams []Team
+	page := 1
+	for {
+		endpoint := fmt.Sprintf("%s/api/teams/search?orgId=%d&page=%d&perpage=500", c.baseURL, orgID, page)
+		var resp struct {
+			Teams []Team `json:"teams"`
+		}
+		if _, err := c.doJSON("GET", endpoint, nil, &resp); err != nil {
+			return nil, err
+		}
+		if len(resp.Teams) == 0 {
+			break
+		}
+		teams = append(teams, resp.Teams...)
+		page++
+	}
+	return teams, nil
+}
+
+func (c *Client) ListAdminUsers() ([]User, error) {
+	var users []User
+	page := 1
+	for {
+		endpoint := fmt.Sprintf("%s/api/admin/users?page=%d&perpage=1000", c.baseURL, page)
+		var resp []User
+		if _, err := c.doJSON("GET", endpoint, nil, &resp); err != nil {
+			return nil, err
+		}
+		if len(resp) == 0 {
+			break
+		}
+		users = append(users, resp...)
+		page++
+	}
+	return users, nil
+}
+
+func (c *Client) ListOrgUsers(orgID int64) ([]OrgUser, error) {
+	endpoint := fmt.Sprintf("%s/api/orgs/%d/users", c.baseURL, orgID)
+	var users []OrgUser
+	if _, err := c.doJSON("GET", endpoint, nil, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 func (c *Client) AddUserToTeam(teamID, userID int64) error {

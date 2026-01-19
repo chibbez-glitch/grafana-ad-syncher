@@ -33,6 +33,22 @@ type Member struct {
 	UPN         string `json:"userPrincipalName"`
 }
 
+type Group struct {
+	ID              string `json:"id"`
+	DisplayName     string `json:"displayName"`
+	Mail            string `json:"mail"`
+	SecurityEnabled bool   `json:"securityEnabled"`
+	MailEnabled     bool   `json:"mailEnabled"`
+}
+
+type User struct {
+	ID             string `json:"id"`
+	DisplayName    string `json:"displayName"`
+	Mail           string `json:"mail"`
+	UPN            string `json:"userPrincipalName"`
+	AccountEnabled bool   `json:"accountEnabled"`
+}
+
 func New(tenantID, clientID, clientSecret, authBase, graphBase string) *Client {
 	return &Client{
 		ten:        tenantID,
@@ -62,12 +78,70 @@ func (c *Client) ListGroupMembers(groupID string) ([]Member, error) {
 			NextLink string   `json:"@odata.nextLink"`
 		}
 		if err := json.NewDecoder(resp).Decode(&page); err != nil {
+			_ = resp.Close()
 			return nil, err
 		}
+		_ = resp.Close()
 		members = append(members, page.Value...)
 		endpoint = page.NextLink
 	}
 	return members, nil
+}
+
+func (c *Client) ListGroups() ([]Group, error) {
+	token, err := c.getToken()
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/groups?$select=id,displayName,mail,securityEnabled,mailEnabled", c.graphBase)
+	var groups []Group
+	for endpoint != "" {
+		resp, err := c.doRequest("GET", endpoint, token, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Value    []Group `json:"value"`
+			NextLink string  `json:"@odata.nextLink"`
+		}
+		if err := json.NewDecoder(resp).Decode(&page); err != nil {
+			_ = resp.Close()
+			return nil, err
+		}
+		_ = resp.Close()
+		groups = append(groups, page.Value...)
+		endpoint = page.NextLink
+	}
+	return groups, nil
+}
+
+func (c *Client) ListUsers() ([]User, error) {
+	token, err := c.getToken()
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/users?$select=id,displayName,mail,userPrincipalName,accountEnabled", c.graphBase)
+	var users []User
+	for endpoint != "" {
+		resp, err := c.doRequest("GET", endpoint, token, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Value    []User `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.NewDecoder(resp).Decode(&page); err != nil {
+			_ = resp.Close()
+			return nil, err
+		}
+		_ = resp.Close()
+		users = append(users, page.Value...)
+		endpoint = page.NextLink
+	}
+	return users, nil
 }
 
 func (c *Client) getToken() (string, error) {

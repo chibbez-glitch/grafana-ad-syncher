@@ -48,7 +48,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	server, err := web.New(st, clientSyncer, filepath.Join("web", "templates"))
+	server, err := web.New(st, clientSyncer, grafanaClient, entraClient, filepath.Join("web", "templates"))
 	if err != nil {
 		log.Fatalf("templates: %v", err)
 	}
