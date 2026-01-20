@@ -39,6 +39,8 @@ type externalCache struct {
 	entraGroupsErr  string
 	entraUsers      []entraUserView
 	entraUsersErr   string
+	folderPerms     []folderPermGroup
+	folderPermsErr  string
 	refreshedAt     time.Time
 }
 
@@ -90,6 +92,8 @@ type pageData struct {
 	EntraGroupsErr   string
 	EntraUsers       []entraUserView
 	EntraUsersErr    string
+	FolderPerms      []folderPermGroup
+	FolderPermsErr   string
 	PlanGroups       []planTeamGroup
 	LastRun          string
 	LastStatus       string
@@ -117,6 +121,20 @@ type planTeamGroup struct {
 	Actions []planActionView
 }
 
+type folderPermEntry struct {
+	Subject     string
+	SubjectType string
+	Permission  string
+}
+
+type folderPermGroup struct {
+	OrgID       int64
+	OrgName     string
+	FolderUID   string
+	FolderTitle string
+	Entries     []folderPermEntry
+}
+
 func New(store *store.Store, syncer *syncer.Syncer, grafanaClient *grafana.Client, entraClient *entra.Client, templateDir string) (*Server, error) {
 	tmpl, err := template.New("layout.html").Funcs(template.FuncMap{
 		"actionClass":  actionClass,
@@ -127,6 +145,7 @@ func New(store *store.Store, syncer *syncer.Syncer, grafanaClient *grafana.Clien
 		filepath.Join(templateDir, "index.html"),
 		filepath.Join(templateDir, "grafana.html"),
 		filepath.Join(templateDir, "entra.html"),
+		filepath.Join(templateDir, "folders.html"),
 	)
 	if err != nil {
 		return nil, err
@@ -146,6 +165,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/grafana", s.handleGrafanaSettings)
 	mux.HandleFunc("/entra", s.handleEntraSettings)
+	mux.HandleFunc("/folders", s.handleFolderPermissions)
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/sync/fetch", s.handleFetch)
 	mux.HandleFunc("/orgs", s.handleCreateOrg)
@@ -196,7 +216,7 @@ func (s *Server) buildPageData() (pageData, error) {
 	if err != nil {
 		return pageData{}, fmt.Errorf("failed to load plan")
 	}
-	grafanaTeams, grafanaTeamsErr, grafanaUsers, grafanaUsersErr, entraGroups, entraGroupsErr, entraUsers, entraUsersErr := s.getExternalData(orgs, mappings)
+	grafanaTeams, grafanaTeamsErr, grafanaUsers, grafanaUsersErr, entraGroups, entraGroupsErr, entraUsers, entraUsersErr, folderPerms, folderPermsErr := s.getExternalData(orgs, mappings)
 	var planGroups []planTeamGroup
 	if plan != nil {
 		planGroups = buildPlanGroups(plan.Actions)
@@ -219,6 +239,8 @@ func (s *Server) buildPageData() (pageData, error) {
 		EntraGroupsErr:  entraGroupsErr,
 		EntraUsers:      entraUsers,
 		EntraUsersErr:   entraUsersErr,
+		FolderPerms:     folderPerms,
+		FolderPermsErr:  folderPermsErr,
 		PlanGroups:      planGroups,
 		LastRun:         formatTime(lastRun),
 		LastStatus:      lastStatus,
@@ -267,6 +289,7 @@ func (s *Server) refreshExternalData() {
 	cache.grafanaUsers, cache.grafanaUsersErr = s.loadGrafanaUsers(orgs)
 	cache.entraGroups, cache.entraGroupsErr = s.loadEntraGroups(orgs, mappings)
 	cache.entraUsers, cache.entraUsersErr = s.loadEntraUsers()
+	cache.folderPerms, cache.folderPermsErr = s.loadGrafanaFolderPermissions(orgs)
 
 	s.cacheMu.Lock()
 	s.cache = cache
@@ -274,7 +297,7 @@ func (s *Server) refreshExternalData() {
 	s.cacheMu.Unlock()
 }
 
-func (s *Server) getExternalData(orgs []store.Org, mappings []store.Mapping) ([]grafanaTeamView, string, []grafanaUserView, string, []entraGroupView, string, []entraUserView, string) {
+func (s *Server) getExternalData(orgs []store.Org, mappings []store.Mapping) ([]grafanaTeamView, string, []grafanaUserView, string, []entraGroupView, string, []entraUserView, string, []folderPermGroup, string) {
 	s.cacheMu.RLock()
 	cache := s.cache
 	s.cacheMu.RUnlock()
@@ -288,7 +311,7 @@ func (s *Server) getExternalData(orgs []store.Org, mappings []store.Mapping) ([]
 		go s.refreshExternalData()
 	}
 
-	return cache.grafanaTeams, cache.grafanaTeamsErr, cache.grafanaUsers, cache.grafanaUsersErr, cache.entraGroups, cache.entraGroupsErr, cache.entraUsers, cache.entraUsersErr
+	return cache.grafanaTeams, cache.grafanaTeamsErr, cache.grafanaUsers, cache.grafanaUsersErr, cache.entraGroups, cache.entraGroupsErr, cache.entraUsers, cache.entraUsersErr, cache.folderPerms, cache.folderPermsErr
 }
 
 func (s *Server) handleGrafanaSettings(w http.ResponseWriter, r *http.Request) {
@@ -329,6 +352,26 @@ func (s *Server) handleEntraSettings(w http.ResponseWriter, r *http.Request) {
 		log.Printf("render error: %v", err)
 	}
 	log.Printf("ui: entra settings rendered in %s", time.Since(start).Round(time.Millisecond))
+}
+
+func (s *Server) handleFolderPermissions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	start := time.Now()
+
+	data, err := s.buildPageData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.CurrentPage = "folders"
+	data.ContentTemplate = "content-folders"
+	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
+		log.Printf("render error: %v", err)
+	}
+	log.Printf("ui: folder permissions rendered in %s", time.Since(start).Round(time.Millisecond))
 }
 
 func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
@@ -576,6 +619,12 @@ func (s *Server) handleUpdateMapping(w http.ResponseWriter, r *http.Request) {
 	teamName := r.FormValue("grafana_team_name")
 	externalGroupID := r.FormValue("external_group_id")
 	externalGroupName := r.FormValue("external_group_name")
+	if externalGroupID == "" && externalGroupName == "" && id != 0 {
+		if existing, err := s.store.GetMapping(id); err == nil && existing != nil {
+			externalGroupID = existing.ExternalGroupID
+			externalGroupName = existing.ExternalGroupName
+		}
+	}
 	if externalGroupID == "" && externalGroupName != "" {
 		orgs, orgErr := s.store.ListOrgs()
 		mappings, mapErr := s.store.ListMappings()
@@ -1107,6 +1156,79 @@ func (s *Server) loadEntraUsers() ([]entraUserView, string) {
 	})
 	log.Printf("ui: entra users filtered=%d in %s", len(views), time.Since(start).Round(time.Millisecond))
 	return views, ""
+}
+
+func (s *Server) loadGrafanaFolderPermissions(orgs []store.Org) ([]folderPermGroup, string) {
+	if s.grafana == nil {
+		return nil, "grafana client not configured"
+	}
+	start := time.Now()
+	var groups []folderPermGroup
+	var errs []string
+	for _, org := range orgs {
+		folders, err := s.grafana.ListFolders(org.GrafanaOrgID)
+		if err != nil {
+			log.Printf("ui: grafana folders fetch failed for org %d: %v", org.GrafanaOrgID, err)
+			errs = append(errs, fmt.Sprintf("org %d: %v", org.GrafanaOrgID, err))
+			continue
+		}
+		for _, folder := range folders {
+			perms, err := s.grafana.ListFolderPermissions(org.GrafanaOrgID, folder.UID)
+			if err != nil {
+				log.Printf("ui: grafana folder permissions fetch failed org=%d folder=%s: %v", org.GrafanaOrgID, folder.UID, err)
+				errs = append(errs, fmt.Sprintf("org %d folder %s: %v", org.GrafanaOrgID, folder.UID, err))
+				continue
+			}
+			group := folderPermGroup{
+				OrgID:       org.GrafanaOrgID,
+				OrgName:     org.Name,
+				FolderUID:   folder.UID,
+				FolderTitle: folder.Title,
+			}
+			for _, perm := range perms {
+				subject, subjectType := folderPermissionSubject(perm)
+				entry := folderPermEntry{
+					Subject:     subject,
+					SubjectType: subjectType,
+					Permission: perm.PermissionName,
+				}
+				group.Entries = append(group.Entries, entry)
+			}
+			sort.Slice(group.Entries, func(i, j int) bool {
+				return strings.ToLower(group.Entries[i].Subject) < strings.ToLower(group.Entries[j].Subject)
+			})
+			groups = append(groups, group)
+		}
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].OrgID == groups[j].OrgID {
+			return strings.ToLower(groups[i].FolderTitle) < strings.ToLower(groups[j].FolderTitle)
+		}
+		return groups[i].OrgID < groups[j].OrgID
+	})
+	log.Printf("ui: grafana folder permissions total=%d in %s", len(groups), time.Since(start).Round(time.Millisecond))
+	return groups, strings.Join(errs, "; ")
+}
+
+func folderPermissionSubject(perm grafana.FolderPermission) (string, string) {
+	if perm.TeamID != 0 {
+		name := perm.Team
+		if strings.TrimSpace(name) == "" {
+			name = fmt.Sprintf("team %d", perm.TeamID)
+		}
+		return name, "team"
+	}
+	if perm.UserID != 0 {
+		name := perm.User
+		if strings.TrimSpace(name) == "" {
+			name = fmt.Sprintf("user %d", perm.UserID)
+		}
+		return name, "user"
+	}
+	if strings.TrimSpace(perm.Role) != "" {
+		return perm.Role, "role"
+	}
+	return "unknown", "unknown"
 }
 
 func (s *Server) handleEntraGroupMembers(w http.ResponseWriter, r *http.Request) {

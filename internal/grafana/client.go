@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,23 @@ type OrgUser struct {
 	Email string `json:"email"`
 	Name  string `json:"name"`
 	Role  string `json:"role"`
+}
+
+type Folder struct {
+	ID    int64  `json:"id"`
+	UID   string `json:"uid"`
+	Title string `json:"title"`
+}
+
+type FolderPermission struct {
+	ID             int64  `json:"id"`
+	Permission     int    `json:"permission"`
+	PermissionName string `json:"permissionName"`
+	TeamID         int64  `json:"teamId"`
+	Team           string `json:"team"`
+	UserID         int64  `json:"userId"`
+	User           string `json:"user"`
+	Role           string `json:"role"`
 }
 
 func New(baseURL, adminUser, adminPassword, adminToken string, insecureTLS bool) *Client {
@@ -218,6 +236,30 @@ func (c *Client) ListOrgUsers(orgID int64) ([]OrgUser, error) {
 	return users, nil
 }
 
+func (c *Client) ListFolders(orgID int64) ([]Folder, error) {
+	endpoint := fmt.Sprintf("%s/api/folders", c.baseURL)
+	var folders []Folder
+	headers := map[string]string{
+		"X-Grafana-Org-Id": strconv.FormatInt(orgID, 10),
+	}
+	if _, err := c.doJSONWithHeaders("GET", endpoint, headers, nil, &folders); err != nil {
+		return nil, err
+	}
+	return folders, nil
+}
+
+func (c *Client) ListFolderPermissions(orgID int64, folderUID string) ([]FolderPermission, error) {
+	endpoint := fmt.Sprintf("%s/api/folders/%s/permissions", c.baseURL, url.PathEscape(folderUID))
+	var perms []FolderPermission
+	headers := map[string]string{
+		"X-Grafana-Org-Id": strconv.FormatInt(orgID, 10),
+	}
+	if _, err := c.doJSONWithHeaders("GET", endpoint, headers, nil, &perms); err != nil {
+		return nil, err
+	}
+	return perms, nil
+}
+
 func (c *Client) AddUserToTeam(teamID, userID int64, role string) error {
 	endpoint := fmt.Sprintf("%s/api/teams/%d/members", c.baseURL, teamID)
 	payload := map[string]any{"userId": userID}
@@ -254,6 +296,10 @@ func (c *Client) RemoveUserFromTeam(teamID, userID int64) error {
 }
 
 func (c *Client) doJSON(method, endpoint string, body any, out any) (int, error) {
+	return c.doJSONWithHeaders(method, endpoint, nil, body, out)
+}
+
+func (c *Client) doJSONWithHeaders(method, endpoint string, headers map[string]string, body any, out any) (int, error) {
 	var reader io.Reader
 	if body != nil {
 		buf := &bytes.Buffer{}
@@ -274,6 +320,12 @@ func (c *Client) doJSON(method, endpoint string, body any, out any) (int, error)
 		req.Header.Set("Authorization", "Bearer "+c.adminToken)
 	} else if c.adminUser != "" || c.adminPassword != "" {
 		req.SetBasicAuth(c.adminUser, c.adminPassword)
+	}
+	for key, value := range headers {
+		if key == "" {
+			continue
+		}
+		req.Header.Set(key, value)
 	}
 
 	resp, err := c.httpClient.Do(req)

@@ -182,6 +182,18 @@ func (s *Store) ListMappings() ([]Mapping, error) {
 	return mappings, rows.Err()
 }
 
+func (s *Store) GetMapping(id int64) (*Mapping, error) {
+	row := s.db.QueryRow(`SELECT id, org_id, grafana_team_name, grafana_team_id, external_group_id, external_group_name, team_role, role_override FROM mappings WHERE id = ?`, id)
+	var m Mapping
+	if err := row.Scan(&m.ID, &m.OrgID, &m.GrafanaTeamName, &m.GrafanaTeamID, &m.ExternalGroupID, &m.ExternalGroupName, &m.TeamRole, &m.RoleOverride); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &m, nil
+}
+
 func (s *Store) CreateMapping(m Mapping) (int64, error) {
 	res, err := s.db.Exec(`INSERT INTO mappings (org_id, grafana_team_name, grafana_team_id, external_group_id, external_group_name, team_role, role_override) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		m.OrgID, m.GrafanaTeamName, m.GrafanaTeamID, m.ExternalGroupID, m.ExternalGroupName, m.TeamRole, m.RoleOverride)
