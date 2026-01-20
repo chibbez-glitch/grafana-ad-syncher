@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"grafana-ad-syncher/internal/entra"
@@ -24,6 +25,21 @@ type Server struct {
 	grafana *grafana.Client
 	entra   *entra.Client
 	tmpl    *template.Template
+	cacheMu sync.RWMutex
+	cache   externalCache
+	refresh bool
+}
+
+type externalCache struct {
+	grafanaTeams    []grafanaTeamView
+	grafanaTeamsErr string
+	grafanaUsers    []grafanaUserView
+	grafanaUsersErr string
+	entraGroups     []entraGroupView
+	entraGroupsErr  string
+	entraUsers      []entraUserView
+	entraUsersErr   string
+	refreshedAt     time.Time
 }
 
 type grafanaTeamView struct {
@@ -115,13 +131,15 @@ func New(store *store.Store, syncer *syncer.Syncer, grafanaClient *grafana.Clien
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	server := &Server{
 		store:   store,
 		syncer:  syncer,
 		grafana: grafanaClient,
 		entra:   entraClient,
 		tmpl:    tmpl,
-	}, nil
+	}
+	go server.refreshLoop(30 * time.Second)
+	return server, nil
 }
 
 func (s *Server) Register(mux *http.ServeMux) {
@@ -176,10 +194,7 @@ func (s *Server) buildPageData() (pageData, error) {
 	if err != nil {
 		return pageData{}, fmt.Errorf("failed to load plan")
 	}
-	grafanaTeams, grafanaTeamsErr := s.loadGrafanaTeams(orgs, mappings)
-	grafanaUsers, grafanaUsersErr := s.loadGrafanaUsers(orgs)
-	entraGroups, entraGroupsErr := s.loadEntraGroups(orgs, mappings)
-	entraUsers, entraUsersErr := s.loadEntraUsers()
+	grafanaTeams, grafanaTeamsErr, grafanaUsers, grafanaUsersErr, entraGroups, entraGroupsErr, entraUsers, entraUsersErr := s.getExternalData(orgs, mappings)
 	var planGroups []planTeamGroup
 	if plan != nil {
 		planGroups = buildPlanGroups(plan.Actions)
@@ -208,6 +223,70 @@ func (s *Server) buildPageData() (pageData, error) {
 		Plan:            plan,
 		AutoSyncEnabled: autoSyncEnabled,
 	}, nil
+}
+
+func (s *Server) refreshLoop(interval time.Duration) {
+	for {
+		s.refreshExternalData()
+		time.Sleep(interval)
+	}
+}
+
+func (s *Server) refreshExternalData() {
+	s.cacheMu.Lock()
+	if s.refresh {
+		s.cacheMu.Unlock()
+		return
+	}
+	s.refresh = true
+	s.cacheMu.Unlock()
+
+	orgs, err := s.store.ListOrgs()
+	if err != nil {
+		log.Printf("ui: refresh orgs failed: %v", err)
+		s.cacheMu.Lock()
+		s.refresh = false
+		s.cacheMu.Unlock()
+		return
+	}
+	mappings, err := s.store.ListMappings()
+	if err != nil {
+		log.Printf("ui: refresh mappings failed: %v", err)
+		s.cacheMu.Lock()
+		s.refresh = false
+		s.cacheMu.Unlock()
+		return
+	}
+
+	cache := externalCache{
+		refreshedAt: time.Now().UTC(),
+	}
+	cache.grafanaTeams, cache.grafanaTeamsErr = s.loadGrafanaTeams(orgs, mappings)
+	cache.grafanaUsers, cache.grafanaUsersErr = s.loadGrafanaUsers(orgs)
+	cache.entraGroups, cache.entraGroupsErr = s.loadEntraGroups(orgs, mappings)
+	cache.entraUsers, cache.entraUsersErr = s.loadEntraUsers()
+
+	s.cacheMu.Lock()
+	s.cache = cache
+	s.refresh = false
+	s.cacheMu.Unlock()
+}
+
+func (s *Server) getExternalData(orgs []store.Org, mappings []store.Mapping) ([]grafanaTeamView, string, []grafanaUserView, string, []entraGroupView, string, []entraUserView, string) {
+	s.cacheMu.RLock()
+	cache := s.cache
+	s.cacheMu.RUnlock()
+
+	if cache.refreshedAt.IsZero() {
+		s.refreshExternalData()
+		s.cacheMu.RLock()
+		cache = s.cache
+		s.cacheMu.RUnlock()
+	} else if time.Since(cache.refreshedAt) > 30*time.Second {
+		go s.refreshExternalData()
+	}
+
+	return cache.grafanaTeams, cache.grafanaTeamsErr, cache.grafanaUsers, cache.grafanaUsersErr, cache.entraGroups, cache.entraGroupsErr, cache.entraUsers, cache.entraUsersErr
 }
 
 func (s *Server) handleGrafanaSettings(w http.ResponseWriter, r *http.Request) {
