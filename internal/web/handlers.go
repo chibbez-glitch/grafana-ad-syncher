@@ -739,8 +739,48 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	s.resolveTeamIDs()
 	s.refreshExternalData()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) resolveTeamIDs() {
+	if s.grafana == nil {
+		return
+	}
+	orgs, err := s.store.ListOrgs()
+	if err != nil {
+		log.Printf("ui: resolve team ids failed to load orgs: %v", err)
+		return
+	}
+	mappings, err := s.store.ListMappings()
+	if err != nil {
+		log.Printf("ui: resolve team ids failed to load mappings: %v", err)
+		return
+	}
+	orgByID := map[int64]store.Org{}
+	for _, org := range orgs {
+		orgByID[org.ID] = org
+	}
+	for _, mapping := range mappings {
+		org, ok := orgByID[mapping.OrgID]
+		if !ok || strings.TrimSpace(mapping.GrafanaTeamName) == "" {
+			continue
+		}
+		teamID, found, err := s.grafana.SearchTeam(org.GrafanaOrgID, mapping.GrafanaTeamName)
+		if err != nil {
+			log.Printf("ui: resolve team id failed org=%d team=%s: %v", org.GrafanaOrgID, mapping.GrafanaTeamName, err)
+			continue
+		}
+		if !found || teamID == 0 {
+			continue
+		}
+		if mapping.GrafanaTeamID != teamID {
+			if err := s.store.UpdateMappingTeamID(mapping.ID, teamID); err != nil {
+				log.Printf("ui: resolve team id update failed mapping=%d team=%d: %v", mapping.ID, teamID, err)
+			}
+		}
+	}
 }
 
 func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
