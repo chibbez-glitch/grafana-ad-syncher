@@ -100,14 +100,14 @@ func (s *Store) SetSetting(key, value string) error {
 func (s *Store) AutoSyncEnabled() (bool, error) {
 	value, ok, err := s.GetSetting(autoSyncSettingKey)
 	if err != nil {
-		return true, err
+		return false, err
 	}
 	if !ok {
-		return true, nil
+		return false, nil
 	}
 	enabled, err := strconv.ParseBool(value)
 	if err != nil {
-		return true, nil
+		return false, nil
 	}
 	return enabled, nil
 }

@@ -248,8 +248,10 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 		return nil, fmt.Errorf("list orgs: %w", err)
 	}
 	orgByID := make(map[int64]store.Org, len(orgs))
+	orgNameByID := make(map[int64]string, len(orgs))
 	for _, org := range orgs {
 		orgByID[org.ID] = org
+		orgNameByID[org.ID] = org.Name
 	}
 
 	mappings, err := s.store.ListMappings()
@@ -260,6 +262,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 	var actions []store.PlanAction
 	userCache := map[string]*grafana.User{}
 	roleByOrgEmail := map[int64]map[string]string{}
+	roleSourceByOrgEmail := map[int64]map[string]string{}
 	addedTeamUsers := map[string]int{}
 	teamRoleByTeamEmail := map[string]map[string]string{}
 	updatedTeamRoles := map[string]struct{}{}
@@ -288,6 +291,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 				TeamName:      mapping.GrafanaTeamName,
 				TeamRole:      normalizeTeamRole(mapping.TeamRole),
 				ExternalGroupID: mapping.ExternalGroupID,
+				Note:          mappingNote(orgNameByID[org.ID], mapping),
 			})
 		}
 
@@ -328,12 +332,17 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 		}
 
 		role := mapping.RoleOverride
+		roleSource := ""
 		if role == "" {
 			if org.DefaultRole != "" {
 				role = org.DefaultRole
+				roleSource = fmt.Sprintf("org default role: %s", org.DefaultRole)
 			} else {
 				role = s.defaultUserRole
+				roleSource = fmt.Sprintf("service default role: %s", s.defaultUserRole)
 			}
+		} else {
+			roleSource = fmt.Sprintf("mapping role override: %s", role)
 		}
 
 		for email, member := range want {
@@ -362,7 +371,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 						DisplayName:   member.DisplayName,
 						Role:          role,
 						ExternalGroupID: mapping.ExternalGroupID,
-						Note:          "user not found and creation disabled",
+						Note:          appendNote("user not found and creation disabled", mappingNote(orgNameByID[org.ID], mapping)),
 					})
 					continue
 				}
@@ -380,13 +389,22 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 					DisplayName:   name,
 					Role:          role,
 					ExternalGroupID: mapping.ExternalGroupID,
+					Note:          mappingNote(orgNameByID[org.ID], mapping),
 				})
 			}
 
 			if roleByOrgEmail[org.ID] == nil {
 				roleByOrgEmail[org.ID] = map[string]string{}
 			}
-			roleByOrgEmail[org.ID][email] = maxRole(roleByOrgEmail[org.ID][email], role)
+			if roleSourceByOrgEmail[org.ID] == nil {
+				roleSourceByOrgEmail[org.ID] = map[string]string{}
+			}
+			current := roleByOrgEmail[org.ID][email]
+			next := maxRole(current, role)
+			roleByOrgEmail[org.ID][email] = next
+			if next != current {
+				roleSourceByOrgEmail[org.ID][email] = fmt.Sprintf("%s; %s", roleSource, mappingNote(orgNameByID[org.ID], mapping))
+			}
 
 			if _, inTeam := have[email]; !inTeam {
 				key := teamKey(org.ID, mapping.GrafanaTeamName)
@@ -411,6 +429,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 						Email:         email,
 						Role:          role,
 						ExternalGroupID: mapping.ExternalGroupID,
+						Note:          mappingNote(orgNameByID[org.ID], mapping),
 					})
 					addedTeamUsers[teamUserKey] = len(actions) - 1
 				}
@@ -429,6 +448,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 							UserID:        userID(user),
 							Email:         email,
 							ExternalGroupID: mapping.ExternalGroupID,
+							Note:          mappingNote(orgNameByID[org.ID], mapping),
 						})
 						updatedTeamRoles[updateKey] = struct{}{}
 					}
@@ -436,7 +456,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			}
 		}
 
-		if s.allowRemoveUsers {
+	if s.allowRemoveUsers {
 			for email, user := range have {
 				if _, ok := want[email]; ok {
 					continue
@@ -450,31 +470,73 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 					UserID:        user.ID,
 					Email:         email,
 					ExternalGroupID: mapping.ExternalGroupID,
+					Note:          mappingNote(orgNameByID[org.ID], mapping),
 				})
 			}
 		}
 	}
 
+	orgUsersByOrgEmail := map[int64]map[string]grafana.OrgUser{}
+	for _, org := range orgs {
+		users, err := s.grafana.ListOrgUsers(org.GrafanaOrgID)
+		if err != nil {
+			log.Printf("sync: list org users %d failed: %v", org.GrafanaOrgID, err)
+			continue
+		}
+		if orgUsersByOrgEmail[org.ID] == nil {
+			orgUsersByOrgEmail[org.ID] = map[string]grafana.OrgUser{}
+		}
+		for _, user := range users {
+			email := strings.ToLower(strings.TrimSpace(user.Email))
+			if email == "" {
+				continue
+			}
+			orgUsersByOrgEmail[org.ID][email] = user
+		}
+	}
+
 	for orgID, roleMap := range roleByOrgEmail {
 		org := orgByID[orgID]
+		orgUsers := orgUsersByOrgEmail[orgID]
 		for email, role := range roleMap {
+			key := strings.ToLower(strings.TrimSpace(email))
+			var existing grafana.OrgUser
+			found := false
+			if orgUsers != nil {
+				existing, found = orgUsers[key]
+			}
 			user := userCache[email]
-			actions = append(actions, store.PlanAction{
-				ActionType:   "add_user_to_org",
-				OrgID:        orgID,
-				GrafanaOrgID: org.GrafanaOrgID,
-				UserID:       userID(user),
-				Email:        email,
-				Role:         role,
-			})
-			actions = append(actions, store.PlanAction{
-				ActionType:   "update_user_role",
-				OrgID:        orgID,
-				GrafanaOrgID: org.GrafanaOrgID,
-				UserID:       userID(user),
-				Email:        email,
-				Role:         role,
-			})
+			if !found {
+				note := roleSourceByOrgEmail[orgID][email]
+				if orgUsers == nil {
+					note = appendNote(note, "org user lookup failed")
+				}
+				actions = append(actions, store.PlanAction{
+					ActionType:   "add_user_to_org",
+					OrgID:        orgID,
+					GrafanaOrgID: org.GrafanaOrgID,
+					UserID:       userID(user),
+					Email:        email,
+					Role:         role,
+					Note:         note,
+				})
+				continue
+			}
+			if !strings.EqualFold(existing.Role, role) {
+				userIDValue := userID(user)
+				if userIDValue == 0 {
+					userIDValue = existing.ID
+				}
+				actions = append(actions, store.PlanAction{
+					ActionType:   "update_user_role",
+					OrgID:        orgID,
+					GrafanaOrgID: org.GrafanaOrgID,
+					UserID:       userIDValue,
+					Email:        email,
+					Role:         role,
+					Note:         appendNote(roleSourceByOrgEmail[orgID][email], fmt.Sprintf("current role: %s", existing.Role)),
+				})
+			}
 		}
 	}
 
@@ -575,4 +637,34 @@ func isExternallySyncedUserErr(err error) bool {
 
 func teamKey(orgID int64, teamName string) string {
 	return fmt.Sprintf("%d:%s", orgID, strings.ToLower(teamName))
+}
+
+func mappingNote(orgName string, mapping store.Mapping) string {
+	orgLabel := orgName
+	if strings.TrimSpace(orgLabel) == "" {
+		orgLabel = fmt.Sprintf("org %d", mapping.OrgID)
+	}
+	groupLabel := strings.TrimSpace(mapping.ExternalGroupName)
+	if groupLabel == "" {
+		groupLabel = mapping.ExternalGroupID
+	} else if mapping.ExternalGroupID != "" {
+		groupLabel = fmt.Sprintf("%s (%s)", groupLabel, mapping.ExternalGroupID)
+	}
+	teamLabel := mapping.GrafanaTeamName
+	if strings.TrimSpace(teamLabel) == "" {
+		teamLabel = fmt.Sprintf("team %d", mapping.GrafanaTeamID)
+	}
+	return fmt.Sprintf("mapping: %s/%s <- %s", orgLabel, teamLabel, groupLabel)
+}
+
+func appendNote(base, addition string) string {
+	base = strings.TrimSpace(base)
+	addition = strings.TrimSpace(addition)
+	if addition == "" {
+		return base
+	}
+	if base == "" {
+		return addition
+	}
+	return base + "; " + addition
 }
