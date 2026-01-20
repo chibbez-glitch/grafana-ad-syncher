@@ -23,6 +23,12 @@
     <tbody>
       {{range .Mappings}}
       {{$mapping := .}}
+      {{$grafanaOrgID := 0}}
+      {{range $.Orgs}}
+      {{if eq .ID $mapping.OrgID}}
+      {{$grafanaOrgID = .GrafanaOrgID}}
+      {{end}}
+      {{end}}
       <tr class="mapping-row" data-mapping-id="{{$mapping.ID}}">
         <td>{{$mapping.ID}}</td>
         <td>
@@ -36,8 +42,11 @@
         <td>
           <span class="view-only">{{$mapping.GrafanaTeamName}}</span>
           <select class="edit-only" name="grafana_team_name" form="mapping-edit-{{$mapping.ID}}" data-role="team-select">
+            <option value="{{$mapping.GrafanaTeamName}}" data-org="{{$grafanaOrgID}}" selected>{{$mapping.GrafanaTeamName}}</option>
             {{range $.GrafanaTeams}}
-            <option value="{{.TeamName}}" data-org="{{.OrgID}}" {{if eq .TeamName $mapping.GrafanaTeamName}}selected{{end}}>{{.OrgID}} - {{.TeamName}}</option>
+            {{if ne .TeamName $mapping.GrafanaTeamName}}
+            <option value="{{.TeamName}}" data-org="{{.OrgID}}">{{.OrgID}} - {{.TeamName}}</option>
+            {{end}}
             {{end}}
           </select>
         </td>
