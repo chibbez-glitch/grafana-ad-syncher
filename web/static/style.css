@@ -264,6 +264,43 @@ table {
   font-size: 14px;
 }
 
+.stacked-table thead {
+  display: none;
+}
+
+.stacked-table tbody tr {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid var(--stroke);
+  border-radius: 12px;
+  margin-bottom: 10px;
+}
+
+.stacked-table tbody td {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  align-items: baseline;
+  gap: 10px;
+  border-bottom: none;
+  padding: 0;
+}
+
+.stacked-table tbody td::before {
+  content: attr(data-label);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stacked-table tbody td:first-child {
+  grid-template-columns: 1fr;
+}
+
+.stacked-table tbody td:first-child::before {
+  content: "";
+}
+
 th, td {
   text-align: left;
   padding: 10px 12px;

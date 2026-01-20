@@ -257,7 +257,7 @@
     {{range .PlanGroups}}
     <div class="group-block">
       <h3>{{.Title}}</h3>
-      <table>
+      <table class="stacked-table">
         <thead>
           <tr>
             <th></th>
@@ -271,14 +271,14 @@
         <tbody>
           {{range .Actions}}
           <tr class="{{.Class}}">
-            <td>
+            <td data-label="Select">
               <input type="checkbox" name="action_id" value="{{.ID}}" {{if not .Selectable}}disabled{{end}} />
             </td>
-            <td>{{actionLabel .Type}}</td>
-            <td>{{.Email}}</td>
-            <td>{{.Role}}</td>
-            <td>{{.TeamRole}}</td>
-            <td>{{.Note}}</td>
+            <td data-label="Action">{{actionLabel .Type}}</td>
+            <td data-label="Email">{{.Email}}</td>
+            <td data-label="Org Role">{{.Role}}</td>
+            <td data-label="Team Role">{{.TeamRole}}</td>
+            <td data-label="Note">{{.Note}}</td>
           </tr>
           {{else}}
           <tr>
