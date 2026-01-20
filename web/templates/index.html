@@ -105,8 +105,11 @@
         <td>
           <span class="view-only">{{$mapping.ExternalGroupName}}</span>
           <select class="edit-only" name="external_group_name" form="mapping-edit-{{$mapping.ID}}" data-role="group-name-select">
+            <option value="{{if $mapping.ExternalGroupName}}{{$mapping.ExternalGroupName}}{{else}}{{$mapping.ExternalGroupID}}{{end}}" data-id="{{$mapping.ExternalGroupID}}" selected>{{if $mapping.ExternalGroupName}}{{$mapping.ExternalGroupName}}{{else}}{{$mapping.ExternalGroupID}}{{end}}</option>
             {{range $.EntraGroups}}
-            <option value="{{.DisplayName}}" data-id="{{.ID}}" {{if eq .ID $mapping.ExternalGroupID}}selected{{end}}>{{.DisplayName}}</option>
+            {{if ne .ID $mapping.ExternalGroupID}}
+            <option value="{{.DisplayName}}" data-id="{{.ID}}">{{.DisplayName}}</option>
+            {{end}}
             {{end}}
           </select>
         </td>
@@ -252,7 +255,10 @@
       const syncGroupID = () => {
         if (!groupIdInput || !groupNameSelect) return;
         const selected = groupNameSelect.selectedOptions[0];
-        groupIdInput.value = selected ? selected.dataset.id || "" : "";
+        if (!selected || !selected.dataset.id) {
+          return;
+        }
+        groupIdInput.value = selected.dataset.id;
       };
       if (orgSelect) {
         orgSelect.addEventListener("change", filterTeams);
