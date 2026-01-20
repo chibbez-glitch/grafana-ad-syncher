@@ -48,7 +48,13 @@
   </header>
 
   <main>
-    {{template .ContentTemplate .}}
+    {{if eq .ContentTemplate "content-grafana"}}
+      {{template "content-grafana" .}}
+    {{else if eq .ContentTemplate "content-entra"}}
+      {{template "content-entra" .}}
+    {{else}}
+      {{template "content-index" .}}
+    {{end}}
   </main>
 
   <footer>
