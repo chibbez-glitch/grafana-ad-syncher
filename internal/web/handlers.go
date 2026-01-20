@@ -80,6 +80,7 @@ type pageData struct {
 	Plan             *store.Plan
 	AutoSyncEnabled  bool
 	CurrentPage      string
+	ContentTemplate  string
 }
 
 type planActionView struct {
@@ -155,6 +156,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.CurrentPage = "home"
+	data.ContentTemplate = "content-index"
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render error: %v", err)
 	}
@@ -221,6 +223,7 @@ func (s *Server) handleGrafanaSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.CurrentPage = "grafana"
+	data.ContentTemplate = "content-grafana"
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render error: %v", err)
 	}
@@ -240,6 +243,7 @@ func (s *Server) handleEntraSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data.CurrentPage = "entra"
+	data.ContentTemplate = "content-entra"
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render error: %v", err)
 	}

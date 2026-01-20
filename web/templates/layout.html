@@ -12,7 +12,7 @@
       <h1>Grafana AD/Entra Sync</h1>
       <p>Manage orgs, mappings, and run syncs.</p>
       <nav class="top-nav">
-        <a href="/" class="{{if eq .CurrentPage "home"}}active{{end}}">Hauptseite</a>
+        <a href="/" class="{{if eq .CurrentPage "home"}}active{{end}}">Sync-Dashboard</a>
         <a href="/grafana" class="{{if eq .CurrentPage "grafana"}}active{{end}}">Grafana settings</a>
         <a href="/entra" class="{{if eq .CurrentPage "entra"}}active{{end}}">EntraID settings</a>
       </nav>
@@ -48,19 +48,12 @@
   </header>
 
   <main>
-    {{template "content" .}}
+    {{template .ContentTemplate .}}
   </main>
 
   <footer>
     <span>Grafana Sync Service</span>
   </footer>
-
-  <div class="loading-overlay" role="status" aria-live="polite" aria-busy="true">
-    <div class="loading-card">
-      <div class="spinner" aria-hidden="true"></div>
-      <div class="loading-text">Working...</div>
-    </div>
-  </div>
 
   <script>
     (function () {

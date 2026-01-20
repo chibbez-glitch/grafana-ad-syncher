@@ -200,23 +200,29 @@ body.loading footer {
 
 .top-nav a {
   text-decoration: none;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  color: var(--accent);
-  padding: 6px 12px;
+  color: var(--ink);
+  padding: 8px 16px;
   border-radius: 999px;
-  border: 1px solid rgba(181, 74, 43, 0.25);
-  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--stroke);
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: 0 8px 18px rgba(88, 74, 58, 0.12);
+  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 
 .top-nav a:hover {
-  background: rgba(181, 74, 43, 0.08);
+  transform: translateY(-1px);
+  border-color: rgba(181, 74, 43, 0.35);
+  box-shadow: 0 12px 24px rgba(88, 74, 58, 0.18);
+  background: rgba(255, 255, 255, 0.95);
 }
 
 .top-nav a.active {
   color: #fff;
   background: var(--accent);
   border-color: var(--accent);
+  box-shadow: 0 12px 24px rgba(181, 74, 43, 0.25);
 }
 
 .status {
