@@ -25,17 +25,20 @@
           <span class="switch-text">Automatische Updates</span>
         </label>
       </form>
-      <form action="/sync/run" method="post">
-        <button type="submit" class="primary" title="Builds a plan and applies it immediately.">Run sync now</button>
-      </form>
-      <form action="/sync/preview" method="post">
-        <button type="submit" class="ghost" title="Builds a plan without applying any changes.">Preview sync</button>
-      </form>
-      <form action="/sync/apply" method="post">
-        <button type="submit" class="ghost" title="Applies the last previewed plan.">Apply plan</button>
+      <form action="/sync/fetch" method="post">
+        <button type="submit" class="soft" title="Fetches the latest EntraID and Grafana data.">1. Fetch EntraID + Grafana</button>
       </form>
       <form action="/sync/clear" method="post">
-        <button type="submit" class="ghost" title="Clears the stored plan without applying it.">Clear plan</button>
+        <button type="submit" class="ghost" title="Clears the stored plan without applying it.">2. Clear plan</button>
+      </form>
+      <form action="/sync/preview" method="post">
+        <button type="submit" class="ghost" title="Builds a plan without applying any changes.">3. Calc change plan</button>
+      </form>
+      <form action="/sync/apply" method="post">
+        <button type="submit" class="ghost" title="Applies the last previewed plan.">4. Apply all changes</button>
+      </form>
+      <form action="/sync/run" method="post">
+        <button type="submit" class="primary" title="Builds a plan and applies it immediately.">Sync, Calc and Apply all</button>
       </form>
       <div class="status">
         <span>Last run: {{.LastRun}}</span>

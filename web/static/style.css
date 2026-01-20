@@ -327,6 +327,16 @@ button.ghost:hover {
   background: rgba(181, 74, 43, 0.08);
 }
 
+button.soft {
+  background: rgba(181, 74, 43, 0.12);
+  color: var(--accent-dark);
+  border-color: rgba(181, 74, 43, 0.3);
+}
+
+button.soft:hover {
+  background: rgba(181, 74, 43, 0.2);
+}
+
 button.link {
   padding: 0;
   border: none;

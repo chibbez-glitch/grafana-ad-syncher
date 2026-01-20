@@ -147,6 +147,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/grafana", s.handleGrafanaSettings)
 	mux.HandleFunc("/entra", s.handleEntraSettings)
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
+	mux.HandleFunc("/sync/fetch", s.handleFetch)
 	mux.HandleFunc("/orgs", s.handleCreateOrg)
 	mux.HandleFunc("/orgs/delete", s.handleDeleteOrg)
 	mux.HandleFunc("/mappings", s.handleCreateMapping)
@@ -607,6 +608,15 @@ func (s *Server) handleAutoSync(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to update auto sync setting", http.StatusInternalServerError)
 		return
 	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.refreshExternalData()
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
