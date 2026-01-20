@@ -255,10 +255,18 @@
       const syncGroupID = () => {
         if (!groupIdInput || !groupNameSelect) return;
         const selected = groupNameSelect.selectedOptions[0];
-        if (!selected || !selected.dataset.id) {
+        if (!selected) {
           return;
         }
-        groupIdInput.value = selected.dataset.id;
+        if (selected.dataset.id) {
+          groupIdInput.value = selected.dataset.id;
+          return;
+        }
+        const match = Array.from(groupNameSelect.options).find((opt) => opt.dataset.id && opt.value === selected.value);
+        if (match) {
+          groupNameSelect.value = match.value;
+          groupIdInput.value = match.dataset.id;
+        }
       };
       if (orgSelect) {
         orgSelect.addEventListener("change", filterTeams);

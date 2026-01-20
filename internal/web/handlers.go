@@ -576,6 +576,19 @@ func (s *Server) handleUpdateMapping(w http.ResponseWriter, r *http.Request) {
 	teamName := r.FormValue("grafana_team_name")
 	externalGroupID := r.FormValue("external_group_id")
 	externalGroupName := r.FormValue("external_group_name")
+	if externalGroupID == "" && externalGroupName != "" {
+		orgs, orgErr := s.store.ListOrgs()
+		mappings, mapErr := s.store.ListMappings()
+		if orgErr == nil && mapErr == nil {
+			_, _, _, _, entraGroups, _, _, _ := s.getExternalData(orgs, mappings)
+			for _, group := range entraGroups {
+				if strings.EqualFold(group.DisplayName, externalGroupName) {
+					externalGroupID = group.ID
+					break
+				}
+			}
+		}
+	}
 	if externalGroupID == "" && externalGroupName != "" && s.entra != nil {
 		groups, err := s.entra.ListGroups()
 		if err == nil {
