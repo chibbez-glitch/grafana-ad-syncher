@@ -629,7 +629,7 @@ func (s *Server) handleUpdateMapping(w http.ResponseWriter, r *http.Request) {
 		orgs, orgErr := s.store.ListOrgs()
 		mappings, mapErr := s.store.ListMappings()
 		if orgErr == nil && mapErr == nil {
-			_, _, _, _, entraGroups, _, _, _ := s.getExternalData(orgs, mappings)
+			_, _, _, _, entraGroups, _, _, _, _, _ := s.getExternalData(orgs, mappings)
 			for _, group := range entraGroups {
 				if strings.EqualFold(group.DisplayName, externalGroupName) {
 					externalGroupID = group.ID
