@@ -196,6 +196,21 @@ func (s *Store) DeleteMapping(id int64) error {
 	return err
 }
 
+func (s *Store) UpdateMapping(m Mapping) error {
+	_, err := s.db.Exec(`UPDATE mappings SET org_id = ?, grafana_team_name = ?, grafana_team_id = ?, external_group_id = ?, external_group_name = ?, team_role = ?, role_override = ?, updated_at = ? WHERE id = ?`,
+		m.OrgID,
+		m.GrafanaTeamName,
+		m.GrafanaTeamID,
+		m.ExternalGroupID,
+		m.ExternalGroupName,
+		m.TeamRole,
+		m.RoleOverride,
+		time.Now().UTC().Format(time.RFC3339),
+		m.ID,
+	)
+	return err
+}
+
 func (s *Store) DeleteMappingsNotInGroupIDs(groupIDs []string) (int64, error) {
 	if len(groupIDs) == 0 {
 		return 0, nil

@@ -152,6 +152,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/orgs/delete", s.handleDeleteOrg)
 	mux.HandleFunc("/mappings", s.handleCreateMapping)
 	mux.HandleFunc("/mappings/delete", s.handleDeleteMapping)
+	mux.HandleFunc("/mappings/update", s.handleUpdateMapping)
 	mux.HandleFunc("/mappings/purge", s.handlePurgeMappings)
 	mux.HandleFunc("/entra/group/members", s.handleEntraGroupMembers)
 	mux.HandleFunc("/settings/auto-sync", s.handleAutoSync)
@@ -556,6 +557,56 @@ func (s *Server) handleDeleteMapping(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
 	if err := s.store.DeleteMapping(id); err != nil {
 		http.Error(w, "failed to delete mapping", http.StatusBadRequest)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleUpdateMapping(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	orgID, _ := strconv.ParseInt(r.FormValue("org_id"), 10, 64)
+	teamName := r.FormValue("grafana_team_name")
+	externalGroupID := r.FormValue("external_group_id")
+	externalGroupName := r.FormValue("external_group_name")
+	if externalGroupID == "" && externalGroupName != "" && s.entra != nil {
+		groups, err := s.entra.ListGroups()
+		if err == nil {
+			for _, group := range groups {
+				if strings.EqualFold(group.DisplayName, externalGroupName) {
+					externalGroupID = group.ID
+					break
+				}
+			}
+		}
+	}
+	if externalGroupID == "" {
+		http.Error(w, "missing Entra group id", http.StatusBadRequest)
+		return
+	}
+	teamRole := strings.ToLower(strings.TrimSpace(r.FormValue("team_role")))
+	if teamRole != "admin" {
+		teamRole = "member"
+	}
+	roleOverride := r.FormValue("role_override")
+	if err := s.store.UpdateMapping(store.Mapping{
+		ID:                id,
+		OrgID:             orgID,
+		GrafanaTeamName:   teamName,
+		GrafanaTeamID:     0,
+		ExternalGroupID:   externalGroupID,
+		ExternalGroupName: externalGroupName,
+		TeamRole:          teamRole,
+		RoleOverride:      roleOverride,
+	}); err != nil {
+		http.Error(w, "failed to update mapping", http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)

@@ -78,20 +78,69 @@
     </thead>
     <tbody>
       {{range .Mappings}}
-      <tr>
-        <td>{{.ID}}</td>
-        <td>{{.OrgID}}</td>
-        <td>{{.GrafanaTeamName}}</td>
-        <td>{{.GrafanaTeamID}}</td>
-        <td>{{.ExternalGroupID}}</td>
-        <td>{{.ExternalGroupName}}</td>
-        <td>{{if .TeamRole}}{{.TeamRole}}{{else}}member{{end}}</td>
-        <td>{{if .RoleOverride}}{{.RoleOverride}}{{else}}(org default){{end}}</td>
+      {{$mapping := .}}
+      <tr class="mapping-row" data-mapping-id="{{$mapping.ID}}">
+        <td>{{$mapping.ID}}</td>
         <td>
-          <form action="/mappings/delete" method="post">
-            <input type="hidden" name="id" value="{{.ID}}" />
-            <button type="submit" class="ghost">Delete</button>
-          </form>
+          <span class="view-only">{{$mapping.OrgID}}</span>
+          <select class="edit-only" name="org_id" form="mapping-edit-{{$mapping.ID}}" data-role="org-select">
+            {{range $.Orgs}}
+            <option value="{{.ID}}" data-grafana-org="{{.GrafanaOrgID}}" {{if eq .ID $mapping.OrgID}}selected{{end}}>{{.GrafanaOrgID}} - {{.Name}}</option>
+            {{end}}
+          </select>
+        </td>
+        <td>
+          <span class="view-only">{{$mapping.GrafanaTeamName}}</span>
+          <select class="edit-only" name="grafana_team_name" form="mapping-edit-{{$mapping.ID}}" data-role="team-select">
+            {{range $.GrafanaTeams}}
+            <option value="{{.TeamName}}" data-org="{{.OrgID}}" {{if eq .TeamName $mapping.GrafanaTeamName}}selected{{end}}>{{.OrgID}} - {{.TeamName}}</option>
+            {{end}}
+          </select>
+        </td>
+        <td>{{$mapping.GrafanaTeamID}}</td>
+        <td>
+          <span class="view-only">{{$mapping.ExternalGroupID}}</span>
+          <input type="hidden" name="external_group_id" form="mapping-edit-{{$mapping.ID}}" value="{{$mapping.ExternalGroupID}}" data-role="group-id-input" />
+        </td>
+        <td>
+          <span class="view-only">{{$mapping.ExternalGroupName}}</span>
+          <select class="edit-only" name="external_group_name" form="mapping-edit-{{$mapping.ID}}" data-role="group-name-select">
+            {{range $.EntraGroups}}
+            <option value="{{.DisplayName}}" data-id="{{.ID}}" {{if eq .ID $mapping.ExternalGroupID}}selected{{end}}>{{.DisplayName}}</option>
+            {{end}}
+          </select>
+        </td>
+        <td>
+          <span class="view-only">{{if $mapping.TeamRole}}{{$mapping.TeamRole}}{{else}}member{{end}}</span>
+          <select class="edit-only" name="team_role" form="mapping-edit-{{$mapping.ID}}">
+            <option value="member" {{if or (eq $mapping.TeamRole "") (eq $mapping.TeamRole "member")}}selected{{end}}>Member</option>
+            <option value="admin" {{if eq $mapping.TeamRole "admin"}}selected{{end}}>Admin</option>
+          </select>
+        </td>
+        <td>
+          <span class="view-only">{{if $mapping.RoleOverride}}{{$mapping.RoleOverride}}{{else}}(org default){{end}}</span>
+          <select class="edit-only" name="role_override" form="mapping-edit-{{$mapping.ID}}">
+            <option value="" {{if eq $mapping.RoleOverride ""}}selected{{end}}>(org default)</option>
+            <option value="Viewer" {{if eq $mapping.RoleOverride "Viewer"}}selected{{end}}>Viewer</option>
+            <option value="Editor" {{if eq $mapping.RoleOverride "Editor"}}selected{{end}}>Editor</option>
+            <option value="Admin" {{if eq $mapping.RoleOverride "Admin"}}selected{{end}}>Admin</option>
+          </select>
+        </td>
+        <td class="mapping-actions">
+          <div class="view-only">
+            <button type="button" class="ghost" data-action="edit">Edit</button>
+            <form action="/mappings/delete" method="post">
+              <input type="hidden" name="id" value="{{$mapping.ID}}" />
+              <button type="submit" class="ghost">Delete</button>
+            </form>
+          </div>
+          <div class="edit-only">
+            <form action="/mappings/update" method="post" id="mapping-edit-{{$mapping.ID}}">
+              <input type="hidden" name="id" value="{{$mapping.ID}}" />
+              <button type="submit" class="primary">Save</button>
+              <button type="button" class="ghost" data-action="cancel">Cancel</button>
+            </form>
+          </div>
         </td>
       </tr>
       {{else}}
@@ -151,7 +200,7 @@
   </form>
 </section>
 
-<script>
+  <script>
   (function () {
     const orgSelect = document.querySelector('[data-role="org-select"]');
     const teamSelect = document.querySelector('[data-role="team-select"]');
@@ -183,6 +232,53 @@
       groupNameSelect.addEventListener("change", syncGroupID);
       syncGroupID();
     }
+
+    const bindRow = (row) => {
+      const orgSelect = row.querySelector('[data-role="org-select"]');
+      const teamSelect = row.querySelector('[data-role="team-select"]');
+      const groupNameSelect = row.querySelector('[data-role="group-name-select"]');
+      const groupIdInput = row.querySelector('[data-role="group-id-input"]');
+      const filterTeams = () => {
+        if (!orgSelect || !teamSelect) return;
+        const orgOption = orgSelect.options[orgSelect.selectedIndex];
+        const orgID = orgOption ? orgOption.dataset.grafanaOrg : "";
+        Array.from(teamSelect.options).forEach((opt) => {
+          opt.hidden = orgID && opt.dataset.org !== orgID;
+        });
+        if (teamSelect.selectedOptions.length && teamSelect.selectedOptions[0].hidden) {
+          teamSelect.value = "";
+        }
+      };
+      const syncGroupID = () => {
+        if (!groupIdInput || !groupNameSelect) return;
+        const selected = groupNameSelect.selectedOptions[0];
+        groupIdInput.value = selected ? selected.dataset.id || "" : "";
+      };
+      if (orgSelect) {
+        orgSelect.addEventListener("change", filterTeams);
+      }
+      if (groupNameSelect) {
+        groupNameSelect.addEventListener("change", syncGroupID);
+      }
+      filterTeams();
+      syncGroupID();
+    };
+
+    document.querySelectorAll(".mapping-row").forEach((row) => {
+      const editBtn = row.querySelector('[data-action="edit"]');
+      const cancelBtn = row.querySelector('[data-action="cancel"]');
+      if (editBtn) {
+        editBtn.addEventListener("click", () => {
+          row.classList.add("is-editing");
+          bindRow(row);
+        });
+      }
+      if (cancelBtn) {
+        cancelBtn.addEventListener("click", () => {
+          row.classList.remove("is-editing");
+        });
+      }
+    });
   })();
 </script>
 
