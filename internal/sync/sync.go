@@ -135,6 +135,10 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 			}
 			if id != 0 {
 				if err := s.grafana.UpdateUserRole(action.GrafanaOrgID, id, action.Role); err != nil {
+					if isExternallySyncedUserErr(err) {
+						log.Printf("sync: skip update role for externally synced user %s: %v", email, err)
+						continue
+					}
 					return err
 				}
 			}
@@ -287,7 +291,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			teamRoleByTeamEmail[key][email] = maxTeamRole(current, normalizeTeamRole(mapping.TeamRole))
 		}
 
-		have := make(map[string]grafana.User)
+		have := make(map[string]grafana.TeamMember)
 		if teamID != 0 {
 			teamMembers, err := s.grafana.ListTeamMembers(teamID)
 			if err != nil {
@@ -478,10 +482,7 @@ func (s *Syncer) finish(start time.Time, err error) error {
 }
 
 func pickEmail(member entra.Member) string {
-	if member.Mail != "" {
-		return member.Mail
-	}
-	return member.UPN
+	return member.Mail
 }
 
 func randomPassword() string {
@@ -542,6 +543,13 @@ func sortActions(actions []store.PlanAction) {
 	sort.SliceStable(actions, func(i, j int) bool {
 		return order[actions[i].ActionType] < order[actions[j].ActionType]
 	})
+}
+
+func isExternallySyncedUserErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "org.externallySynced")
 }
 
 func teamKey(orgID int64, teamName string) string {

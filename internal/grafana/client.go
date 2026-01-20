@@ -32,6 +32,14 @@ type Team struct {
 	Name string `json:"name"`
 }
 
+type TeamMember struct {
+	ID    int64  `json:"userId"`
+	Name  string `json:"name"`
+	Login string `json:"login"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
 type OrgUser struct {
 	ID    int64  `json:"userId"`
 	Login string `json:"login"`
@@ -145,9 +153,9 @@ func (c *Client) SearchTeam(orgID int64, name string) (int64, bool, error) {
 	return 0, false, nil
 }
 
-func (c *Client) ListTeamMembers(teamID int64) ([]User, error) {
+func (c *Client) ListTeamMembers(teamID int64) ([]TeamMember, error) {
 	endpoint := fmt.Sprintf("%s/api/teams/%d/members", c.baseURL, teamID)
-	var members []User
+	var members []TeamMember
 	if _, err := c.doJSON("GET", endpoint, nil, &members); err != nil {
 		return nil, err
 	}

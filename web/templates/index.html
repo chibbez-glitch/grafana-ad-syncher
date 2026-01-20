@@ -122,23 +122,15 @@
       </select>
     </label>
     <label>
-      <span>Entra Group ID</span>
-      <select name="external_group_id" required data-role="group-id-select">
-        <option value="">Select group...</option>
-        {{range .EntraGroups}}
-        <option value="{{.ID}}" data-name="{{.DisplayName}}">{{.ID}}</option>
-        {{end}}
-      </select>
-    </label>
-    <label>
       <span>Entra Group Name</span>
-      <select name="external_group_name" data-role="group-name-select">
+      <select name="external_group_name" required data-role="group-name-select">
         <option value="">Select group...</option>
         {{range .EntraGroups}}
         <option value="{{.DisplayName}}" data-id="{{.ID}}">{{.DisplayName}}</option>
         {{end}}
       </select>
     </label>
+    <input type="hidden" name="external_group_id" data-role="group-id-input" />
     <label>
       <span>Team Role</span>
       <select name="team_role">
@@ -210,6 +202,7 @@
         <th>Login</th>
         <th>Email</th>
         <th>Name</th>
+        <th>Teams (Role)</th>
       </tr>
     </thead>
     <tbody>
@@ -219,10 +212,11 @@
         <td>{{.Login}}</td>
         <td>{{.Email}}</td>
         <td>{{.Name}}</td>
+        <td>{{if .Teams}}{{.Teams}}{{else}}-{{end}}</td>
       </tr>
       {{else}}
       <tr>
-        <td colspan="4" class="muted">No users found.</td>
+        <td colspan="5" class="muted">No users found.</td>
       </tr>
       {{end}}
     </tbody>
@@ -276,6 +270,7 @@
         <th>UPN</th>
         <th>Mail</th>
         <th>Department</th>
+        <th>_grf_ Groups</th>
       </tr>
     </thead>
     <tbody>
@@ -285,10 +280,11 @@
         <td>{{.UPN}}</td>
         <td>{{.Mail}}</td>
         <td>{{.Department}}</td>
+        <td>{{if .Groups}}{{.Groups}}{{else}}-{{end}}</td>
       </tr>
       {{else}}
       <tr>
-        <td colspan="4" class="muted">No users found.</td>
+        <td colspan="5" class="muted">No users found.</td>
       </tr>
       {{end}}
     </tbody>
@@ -325,7 +321,7 @@
   (function () {
     const orgSelect = document.querySelector('[data-role="org-select"]');
     const teamSelect = document.querySelector('[data-role="team-select"]');
-    const groupIdSelect = document.querySelector('[data-role="group-id-select"]');
+    const groupIdInput = document.querySelector('[data-role="group-id-input"]');
     const groupNameSelect = document.querySelector('[data-role="group-name-select"]');
 
     const filterTeams = () => {
@@ -341,23 +337,17 @@
       }
     };
 
-    const syncGroupSelects = (source, target, dataKey) => {
-      if (!source || !target) return;
-      const selected = source.selectedOptions[0];
-      if (!selected || !selected.value) return;
-      const match = Array.from(target.options).find((opt) => opt.dataset[dataKey] === selected.value);
-      if (match) {
-        target.value = match.value;
-      }
-    };
-
     if (orgSelect) {
       orgSelect.addEventListener("change", filterTeams);
       filterTeams();
     }
-    if (groupIdSelect && groupNameSelect) {
-      groupIdSelect.addEventListener("change", () => syncGroupSelects(groupIdSelect, groupNameSelect, "id"));
-      groupNameSelect.addEventListener("change", () => syncGroupSelects(groupNameSelect, groupIdSelect, "name"));
+    if (groupIdInput && groupNameSelect) {
+      const syncGroupID = () => {
+        const selected = groupNameSelect.selectedOptions[0];
+        groupIdInput.value = selected ? selected.dataset.id || "" : "";
+      };
+      groupNameSelect.addEventListener("change", syncGroupID);
+      syncGroupID();
     }
 
     const modal = document.getElementById("members-modal");

@@ -42,6 +42,7 @@ type grafanaUserView struct {
 	Login string
 	Email string
 	Name  string
+	Teams string
 }
 
 type entraGroupView struct {
@@ -59,6 +60,7 @@ type entraUserView struct {
 	Mail        string
 	UPN         string
 	Department  string
+	Groups      string
 }
 
 type pageData struct {
@@ -238,6 +240,21 @@ func (s *Server) handleCreateMapping(w http.ResponseWriter, r *http.Request) {
 	teamName := r.FormValue("grafana_team_name")
 	externalGroupID := r.FormValue("external_group_id")
 	externalGroupName := r.FormValue("external_group_name")
+	if externalGroupID == "" && externalGroupName != "" && s.entra != nil {
+		groups, err := s.entra.ListGroups()
+		if err == nil {
+			for _, group := range groups {
+				if strings.EqualFold(group.DisplayName, externalGroupName) {
+					externalGroupID = group.ID
+					break
+				}
+			}
+		}
+	}
+	if externalGroupID == "" {
+		http.Error(w, "missing Entra group id", http.StatusBadRequest)
+		return
+	}
 	teamRole := strings.ToLower(strings.TrimSpace(r.FormValue("team_role")))
 	if teamRole != "admin" {
 		teamRole = "member"
@@ -540,6 +557,31 @@ func (s *Server) loadGrafanaUsers(orgs []store.Org) ([]grafanaUserView, string) 
 		return nil, "grafana client not configured"
 	}
 	start := time.Now()
+	teamLabelsByUser := map[int64]map[string]struct{}{}
+	for _, org := range orgs {
+		teams, err := s.grafana.ListTeams(org.GrafanaOrgID)
+		if err != nil {
+			log.Printf("ui: grafana teams fetch failed for org %d: %v", org.GrafanaOrgID, err)
+			continue
+		}
+		for _, team := range teams {
+			members, err := s.grafana.ListTeamMembers(team.ID)
+			if err != nil {
+				log.Printf("ui: grafana team members fetch failed team=%d: %v", team.ID, err)
+				continue
+			}
+			for _, member := range members {
+				if member.ID == 0 {
+					continue
+				}
+				label := fmt.Sprintf("%s (%s)", team.Name, formatTeamRole(member.Role))
+				if teamLabelsByUser[member.ID] == nil {
+					teamLabelsByUser[member.ID] = map[string]struct{}{}
+				}
+				teamLabelsByUser[member.ID][label] = struct{}{}
+			}
+		}
+	}
 	users, err := s.grafana.ListAdminUsers()
 	if err != nil {
 		log.Printf("ui: grafana admin users fetch failed: %v", err)
@@ -554,11 +596,13 @@ func (s *Server) loadGrafanaUsers(orgs []store.Org) ([]grafanaUserView, string) 
 				if user.ID == 0 {
 					continue
 				}
+				teams := joinTeamLabels(teamLabelsByUser[user.ID])
 				userByID[user.ID] = grafanaUserView{
 					ID:    user.ID,
 					Login: user.Login,
 					Email: user.Email,
 					Name:  user.Name,
+					Teams: teams,
 				}
 			}
 		}
@@ -574,11 +618,13 @@ func (s *Server) loadGrafanaUsers(orgs []store.Org) ([]grafanaUserView, string) 
 	}
 	views := make([]grafanaUserView, 0, len(users))
 	for _, user := range users {
+		teams := joinTeamLabels(teamLabelsByUser[user.ID])
 		views = append(views, grafanaUserView{
 			ID:    user.ID,
 			Login: user.Login,
 			Email: user.Email,
 			Name:  user.Name,
+			Teams: teams,
 		})
 	}
 	sort.Slice(views, func(i, j int) bool {
@@ -658,7 +704,11 @@ func (s *Server) loadEntraUsers() ([]entraUserView, string) {
 		log.Printf("ui: entra users list groups failed: %v", err)
 		return nil, err.Error()
 	}
-	seen := map[string]entra.Member{}
+	type memberInfo struct {
+		member   entra.Member
+		groupsBy map[string]struct{}
+	}
+	seen := map[string]*memberInfo{}
 	for _, group := range groups {
 		if !matchEntraGroupName(group.DisplayName) {
 			continue
@@ -672,17 +722,25 @@ func (s *Server) loadEntraUsers() ([]entraUserView, string) {
 			if member.ID == "" {
 				continue
 			}
-			seen[member.ID] = member
+			if seen[member.ID] == nil {
+				seen[member.ID] = &memberInfo{
+					member:   member,
+					groupsBy: map[string]struct{}{},
+				}
+			}
+			seen[member.ID].groupsBy[group.DisplayName] = struct{}{}
 		}
 	}
 	views := make([]entraUserView, 0, len(seen))
-	for _, member := range seen {
+	for _, info := range seen {
+		member := info.member
 		views = append(views, entraUserView{
 			ID:          member.ID,
 			DisplayName: member.DisplayName,
 			Mail:        member.Mail,
 			UPN:         member.UPN,
 			Department:  member.Department,
+			Groups:      joinGroupLabels(info.groupsBy),
 		})
 	}
 	sort.Slice(views, func(i, j int) bool {
@@ -812,6 +870,37 @@ func buildPlanGroups(actions []store.PlanAction) []planTeamGroup {
 		result = append(result, planTeamGroup{Title: g.title, Actions: g.actions})
 	}
 	return result
+}
+
+func formatTeamRole(role string) string {
+	if strings.EqualFold(role, "admin") {
+		return "Admin"
+	}
+	return "Member"
+}
+
+func joinTeamLabels(labels map[string]struct{}) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	values := make([]string, 0, len(labels))
+	for label := range labels {
+		values = append(values, label)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ", ")
+}
+
+func joinGroupLabels(labels map[string]struct{}) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	values := make([]string, 0, len(labels))
+	for label := range labels {
+		values = append(values, label)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ", ")
 }
 
 func actionClass(actionType string) string {
