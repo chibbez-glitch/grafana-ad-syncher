@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 type Store struct {
 	db *sql.DB
 }
+
+const autoSyncSettingKey = "auto_sync_enabled"
 
 type Org struct {
 	ID           int64
@@ -54,6 +57,63 @@ type PlanAction struct {
 	Role           string
 	ExternalGroupID string
 	Note           string
+}
+
+type SyncAction struct {
+	ID           int64
+	CreatedAt    string
+	OrgID        int64
+	GrafanaOrgID int64
+	ActionType   string
+	TeamName     string
+	Email        string
+}
+
+func (s *Store) GetSetting(key string) (string, bool, error) {
+	row := s.db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key)
+	var value string
+	if err := row.Scan(&value); err != nil {
+		if err == sql.ErrNoRows {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	return value, true, nil
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	res, err := s.db.Exec(`UPDATE settings SET value = ?, updated_at = ? WHERE key = ?`, value, time.Now().UTC().Format(time.RFC3339), key)
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		_, err = s.db.Exec(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`, key, value, time.Now().UTC().Format(time.RFC3339))
+		return err
+	}
+	return nil
+}
+
+func (s *Store) AutoSyncEnabled() (bool, error) {
+	value, ok, err := s.GetSetting(autoSyncSettingKey)
+	if err != nil {
+		return true, err
+	}
+	if !ok {
+		return true, nil
+	}
+	enabled, err := strconv.ParseBool(value)
+	if err != nil {
+		return true, nil
+	}
+	return enabled, nil
+}
+
+func (s *Store) SetAutoSyncEnabled(enabled bool) error {
+	return s.SetSetting(autoSyncSettingKey, strconv.FormatBool(enabled))
 }
 
 func Open(dataDir string) (*Store, error) {
@@ -253,8 +313,82 @@ func (s *Store) UpdatePlanStatus(planID int64, status string) error {
 	return err
 }
 
+func (s *Store) RecordSyncAction(action PlanAction, at time.Time) error {
+	createdAt := at.UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(
+		`INSERT INTO sync_actions (created_at, org_id, grafana_org_id, action_type, team_name, email) VALUES (?, ?, ?, ?, ?, ?)`,
+		createdAt,
+		action.OrgID,
+		action.GrafanaOrgID,
+		action.ActionType,
+		action.TeamName,
+		strings.ToLower(strings.TrimSpace(action.Email)),
+	)
+	return err
+}
+
+func (s *Store) LatestSyncActionTime(orgID int64) (time.Time, error) {
+	row := s.db.QueryRow(`SELECT MAX(created_at) FROM sync_actions WHERE org_id = ?`, orgID)
+	var raw sql.NullString
+	if err := row.Scan(&raw); err != nil {
+		return time.Time{}, err
+	}
+	if !raw.Valid || raw.String == "" {
+		return time.Time{}, nil
+	}
+	parsed, err := time.Parse(time.RFC3339, raw.String)
+	if err != nil {
+		return time.Time{}, nil
+	}
+	return parsed, nil
+}
+
+func (s *Store) CountDistinctUserChangesSince(orgID int64, since time.Time) (int, error) {
+	query := `SELECT COUNT(DISTINCT email) FROM sync_actions
+		WHERE org_id = ?
+		  AND created_at >= ?
+		  AND email <> ''
+		  AND action_type IN ('create_user','add_user_to_org','update_user_role','add_user_to_team','update_team_role','remove_user_from_team')`
+	row := s.db.QueryRow(query, orgID, since.UTC().Format(time.RFC3339))
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func (s *Store) CountDistinctTeamChangesSince(orgID int64, since time.Time) (int, error) {
+	query := `SELECT COUNT(DISTINCT team_name) FROM sync_actions
+		WHERE org_id = ?
+		  AND created_at >= ?
+		  AND team_name <> ''
+		  AND action_type IN ('create_team')`
+	row := s.db.QueryRow(query, orgID, since.UTC().Format(time.RFC3339))
+	var count int
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func migrate(db *sql.DB) error {
 	queries := []string{
+		`CREATE TABLE IF NOT EXISTS settings (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS sync_actions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at TEXT NOT NULL,
+			org_id INTEGER NOT NULL,
+			grafana_org_id INTEGER,
+			action_type TEXT NOT NULL,
+			team_name TEXT,
+			email TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_actions_org_id ON sync_actions(org_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sync_actions_created_at ON sync_actions(created_at)`,
 		`CREATE TABLE IF NOT EXISTS orgs (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			grafana_org_id INTEGER NOT NULL UNIQUE,

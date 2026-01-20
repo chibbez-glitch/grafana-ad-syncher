@@ -24,6 +24,9 @@ type Client struct {
 	mu          sync.Mutex
 	accessToken string
 	expiresAt   time.Time
+
+	lastOKMu sync.Mutex
+	lastOK   time.Time
 }
 
 type Member struct {
@@ -59,6 +62,12 @@ func New(tenantID, clientID, clientSecret, authBase, graphBase string) *Client {
 		graphBase:  strings.TrimRight(graphBase, "/"),
 		httpClient: &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+func (c *Client) LastOK() time.Time {
+	c.lastOKMu.Lock()
+	defer c.lastOKMu.Unlock()
+	return c.lastOK
 }
 
 func (c *Client) ListGroupMembers(groupID string) ([]Member, error) {
@@ -226,5 +235,8 @@ func (c *Client) doRequest(method, endpoint, token string, body any) (io.ReadClo
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("entra: %s %s -> %d: %s", method, endpoint, resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
+	c.lastOKMu.Lock()
+	c.lastOK = time.Now().UTC()
+	c.lastOKMu.Unlock()
 	return resp.Body, nil
 }

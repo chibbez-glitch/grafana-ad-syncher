@@ -1,0 +1,211 @@
+{{define "content"}}
+<section class="card">
+  <h2>Grafana Orgs</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Grafana Org ID</th>
+        <th>Name</th>
+        <th>Default Role</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Orgs}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.GrafanaOrgID}}</td>
+        <td>{{.Name}}</td>
+        <td>{{.DefaultRole}}</td>
+        <td>
+          <form action="/orgs/delete" method="post">
+            <input type="hidden" name="id" value="{{.ID}}" />
+            <button type="submit" class="ghost">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="5" class="muted">No orgs yet.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+
+  <h3>Add org</h3>
+  <form action="/orgs" method="post" class="grid">
+    <label>
+      <span>Grafana Org ID</span>
+      <input type="number" name="grafana_org_id" required />
+    </label>
+    <label>
+      <span>Name</span>
+      <input type="text" name="name" />
+    </label>
+    <label>
+      <span>Default Role</span>
+      <select name="default_role">
+        <option>Viewer</option>
+        <option>Editor</option>
+        <option>Admin</option>
+      </select>
+    </label>
+    <button type="submit" class="primary">Add org</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Grafana Teams <span class="count">{{len .GrafanaTeams}}</span></h2>
+  {{if .GrafanaTeamsErr}}
+  <p class="muted">Grafana team list error: {{.GrafanaTeamsErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>Org</th>
+        <th>Team</th>
+        <th>Team ID</th>
+        <th>Members</th>
+        <th>Mapping</th>
+        <th>Entra Group</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .GrafanaTeams}}
+      <tr>
+        <td>{{.OrgID}} - {{.OrgName}}</td>
+        <td>
+          <button type="button" class="link" data-team="{{.TeamName}}" data-group-ids="{{.GroupIDsCSV}}">
+            {{.TeamName}}
+          </button>
+        </td>
+        <td>{{.TeamID}}</td>
+        <td>{{.MemberCount}}</td>
+        <td>{{.MappingState}}</td>
+        <td>{{if .MappingInfo}}{{.MappingInfo}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="6" class="muted">No teams found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Grafana Users <span class="count">{{len .GrafanaUsers}}</span></h2>
+  {{if .GrafanaUsersErr}}
+  <p class="muted">Grafana user list error: {{.GrafanaUsersErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Login</th>
+        <th>Email</th>
+        <th>Name</th>
+        <th>Teams (Role)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .GrafanaUsers}}
+      <tr>
+        <td>{{.ID}}</td>
+        <td>{{.Login}}</td>
+        <td>{{.Email}}</td>
+        <td>{{.Name}}</td>
+        <td>{{if .Teams}}{{.Teams}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="5" class="muted">No users found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<dialog class="modal" id="members-modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h3 id="members-title">Team Members</h3>
+      <button type="button" class="ghost" data-modal-close>Close</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead>
+          <tr>
+            <th>Display Name</th>
+            <th>UPN</th>
+            <th>Department</th>
+            <th>Email</th>
+          </tr>
+        </thead>
+        <tbody id="members-body">
+          <tr>
+            <td colspan="4" class="muted">Select a mapped team to view members.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</dialog>
+
+<script>
+  (function () {
+    const modal = document.getElementById("members-modal");
+    const membersBody = document.getElementById("members-body");
+    const membersTitle = document.getElementById("members-title");
+    const closeButtons = document.querySelectorAll("[data-modal-close]");
+
+    const renderMembers = (rows) => {
+      membersBody.innerHTML = "";
+      if (!rows.length) {
+        const row = document.createElement("tr");
+        row.innerHTML = '<td colspan="4" class="muted">No members found.</td>';
+        membersBody.appendChild(row);
+        return;
+      }
+      rows.forEach((row) => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${row.displayName || ""}</td><td>${row.upn || ""}</td><td>${row.department || ""}</td><td>${row.mail || ""}</td>`;
+        membersBody.appendChild(tr);
+      });
+    };
+
+    document.querySelectorAll('[data-team]').forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const groupIDs = (btn.dataset.groupIds || "").split(",").filter(Boolean);
+        if (!modal) return;
+        membersTitle.textContent = `Team Members: ${btn.dataset.team}`;
+        if (groupIDs.length !== 1) {
+          membersBody.innerHTML = '<tr><td colspan="4" class="muted">Members available only when exactly one Entra group is mapped.</td></tr>';
+          if (modal.showModal) modal.showModal();
+          return;
+        }
+        membersBody.innerHTML = '<tr><td colspan="4" class="muted">Loading...</td></tr>';
+        if (modal.showModal) modal.showModal();
+        try {
+          const resp = await fetch(`/entra/group/members?group_id=${encodeURIComponent(groupIDs[0])}`);
+          if (!resp.ok) {
+            renderMembers([]);
+            return;
+          }
+          const data = await resp.json();
+          renderMembers(data);
+        } catch (err) {
+          renderMembers([]);
+        }
+      });
+    });
+
+    closeButtons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        if (modal && modal.close) modal.close();
+      });
+    });
+  })();
+</script>
+{{end}}

@@ -39,8 +39,13 @@ func main() {
 			ticker := time.NewTicker(cfg.SyncInterval)
 			defer ticker.Stop()
 			for {
-				if err := clientSyncer.Run(); err != nil {
-					log.Printf("scheduled sync failed: %v", err)
+				enabled, err := st.AutoSyncEnabled()
+				if err != nil {
+					log.Printf("auto sync status lookup failed: %v", err)
+				} else if enabled {
+					if err := clientSyncer.Run(); err != nil {
+						log.Printf("scheduled sync failed: %v", err)
+					}
 				}
 				<-ticker.C
 			}

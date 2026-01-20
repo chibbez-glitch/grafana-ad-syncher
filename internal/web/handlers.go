@@ -78,6 +78,8 @@ type pageData struct {
 	LastRun          string
 	LastStatus       string
 	Plan             *store.Plan
+	AutoSyncEnabled  bool
+	CurrentPage      string
 }
 
 type planActionView struct {
@@ -106,6 +108,8 @@ func New(store *store.Store, syncer *syncer.Syncer, grafanaClient *grafana.Clien
 	}).ParseFiles(
 		filepath.Join(templateDir, "layout.html"),
 		filepath.Join(templateDir, "index.html"),
+		filepath.Join(templateDir, "grafana.html"),
+		filepath.Join(templateDir, "entra.html"),
 	)
 	if err != nil {
 		return nil, err
@@ -121,12 +125,16 @@ func New(store *store.Store, syncer *syncer.Syncer, grafanaClient *grafana.Clien
 
 func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/grafana", s.handleGrafanaSettings)
+	mux.HandleFunc("/entra", s.handleEntraSettings)
+	mux.HandleFunc("/api/status", s.handleAPIStatus)
 	mux.HandleFunc("/orgs", s.handleCreateOrg)
 	mux.HandleFunc("/orgs/delete", s.handleDeleteOrg)
 	mux.HandleFunc("/mappings", s.handleCreateMapping)
 	mux.HandleFunc("/mappings/delete", s.handleDeleteMapping)
 	mux.HandleFunc("/mappings/purge", s.handlePurgeMappings)
 	mux.HandleFunc("/entra/group/members", s.handleEntraGroupMembers)
+	mux.HandleFunc("/settings/auto-sync", s.handleAutoSync)
 	mux.HandleFunc("/sync/preview", s.handlePreview)
 	mux.HandleFunc("/sync/run", s.handleRun)
 	mux.HandleFunc("/sync/apply", s.handleApply)
@@ -141,20 +149,30 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 
+	data, err := s.buildPageData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.CurrentPage = "home"
+	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
+		log.Printf("render error: %v", err)
+	}
+	log.Printf("ui: index rendered in %s", time.Since(start).Round(time.Millisecond))
+}
+
+func (s *Server) buildPageData() (pageData, error) {
 	orgs, err := s.store.ListOrgs()
 	if err != nil {
-		http.Error(w, "failed to load orgs", http.StatusInternalServerError)
-		return
+		return pageData{}, fmt.Errorf("failed to load orgs")
 	}
 	mappings, err := s.store.ListMappings()
 	if err != nil {
-		http.Error(w, "failed to load mappings", http.StatusInternalServerError)
-		return
+		return pageData{}, fmt.Errorf("failed to load mappings")
 	}
 	plan, err := s.store.LatestPlan()
 	if err != nil {
-		http.Error(w, "failed to load plan", http.StatusInternalServerError)
-		return
+		return pageData{}, fmt.Errorf("failed to load plan")
 	}
 	grafanaTeams, grafanaTeamsErr := s.loadGrafanaTeams(orgs, mappings)
 	grafanaUsers, grafanaUsersErr := s.loadGrafanaUsers(orgs)
@@ -165,7 +183,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		planGroups = buildPlanGroups(plan.Actions)
 	}
 	lastRun, lastStatus := s.syncer.LastRun()
-	data := pageData{
+	autoSyncEnabled := true
+	if enabled, err := s.store.AutoSyncEnabled(); err != nil {
+		log.Printf("ui: auto sync state load failed: %v", err)
+	} else {
+		autoSyncEnabled = enabled
+	}
+	return pageData{
 		Orgs:            orgs,
 		Mappings:        mappings,
 		GrafanaTeams:    grafanaTeams,
@@ -180,11 +204,172 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		LastRun:         formatTime(lastRun),
 		LastStatus:      lastStatus,
 		Plan:            plan,
+		AutoSyncEnabled: autoSyncEnabled,
+	}, nil
+}
+
+func (s *Server) handleGrafanaSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
+	start := time.Now()
+
+	data, err := s.buildPageData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.CurrentPage = "grafana"
 	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
 		log.Printf("render error: %v", err)
 	}
-	log.Printf("ui: index rendered in %s", time.Since(start).Round(time.Millisecond))
+	log.Printf("ui: grafana settings rendered in %s", time.Since(start).Round(time.Millisecond))
+}
+
+func (s *Server) handleEntraSettings(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	start := time.Now()
+
+	data, err := s.buildPageData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data.CurrentPage = "entra"
+	if err := s.tmpl.ExecuteTemplate(w, "layout.html", data); err != nil {
+		log.Printf("render error: %v", err)
+	}
+	log.Printf("ui: entra settings rendered in %s", time.Since(start).Round(time.Millisecond))
+}
+
+func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	orgs, err := s.store.ListOrgs()
+	if err != nil {
+		http.Error(w, "failed to load orgs", http.StatusInternalServerError)
+		return
+	}
+
+	type windowCounts struct {
+		Users int `json:"users"`
+		Teams int `json:"teams"`
+	}
+	type orgStatus struct {
+		OrgID            int64        `json:"org_id"`
+		GrafanaOrgID     int64        `json:"grafana_org_id"`
+		Name             string       `json:"name"`
+		GrafanaAccessOK  bool         `json:"grafana_access_ok"`
+		EntraAccessOK    bool         `json:"entra_access_ok"`
+		LastGrafanaSync  string       `json:"last_grafana_sync"`
+		LastEntraSync    string       `json:"last_entra_sync"`
+		GrafanaUserTotal int          `json:"grafana_users_total"`
+		ChangesToday     windowCounts `json:"changes_today"`
+		Changes3Days     windowCounts `json:"changes_last_3_days"`
+		Changes7Days     windowCounts `json:"changes_last_7_days"`
+	}
+	type apiStatus struct {
+		GeneratedAt    string      `json:"generated_at"`
+		GrafanaOK      bool        `json:"grafana_ok"`
+		EntraOK        bool        `json:"entra_ok"`
+		GrafanaLastOK  string      `json:"grafana_last_ok"`
+		EntraLastOK    string      `json:"entra_last_ok"`
+		Orgs           []orgStatus `json:"orgs"`
+	}
+
+	now := time.Now().UTC()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	since3d := now.AddDate(0, 0, -3)
+	since7d := now.AddDate(0, 0, -7)
+
+	entraOK := false
+	if s.entra != nil {
+		if _, err := s.entra.ListGroups(); err == nil {
+			entraOK = true
+		}
+	}
+
+	var orgStatuses []orgStatus
+	grafanaOK := s.grafana != nil
+	for _, org := range orgs {
+		status := orgStatus{
+			OrgID:        org.ID,
+			GrafanaOrgID: org.GrafanaOrgID,
+			Name:         org.Name,
+			EntraAccessOK: entraOK,
+		}
+		if s.grafana != nil {
+			users, err := s.grafana.ListOrgUsers(org.GrafanaOrgID)
+			if err != nil {
+				status.GrafanaAccessOK = false
+				grafanaOK = false
+			} else {
+				status.GrafanaAccessOK = true
+				status.GrafanaUserTotal = len(users)
+			}
+		} else {
+			status.GrafanaAccessOK = false
+			grafanaOK = false
+		}
+
+		if last, err := s.store.LatestSyncActionTime(org.ID); err == nil {
+			status.LastGrafanaSync = formatTime(last)
+		}
+		if s.entra != nil {
+			status.LastEntraSync = formatTime(s.entra.LastOK())
+		} else {
+			status.LastEntraSync = "never"
+		}
+
+		if count, err := s.store.CountDistinctUserChangesSince(org.ID, startOfDay); err == nil {
+			status.ChangesToday.Users = count
+		}
+		if count, err := s.store.CountDistinctTeamChangesSince(org.ID, startOfDay); err == nil {
+			status.ChangesToday.Teams = count
+		}
+		if count, err := s.store.CountDistinctUserChangesSince(org.ID, since3d); err == nil {
+			status.Changes3Days.Users = count
+		}
+		if count, err := s.store.CountDistinctTeamChangesSince(org.ID, since3d); err == nil {
+			status.Changes3Days.Teams = count
+		}
+		if count, err := s.store.CountDistinctUserChangesSince(org.ID, since7d); err == nil {
+			status.Changes7Days.Users = count
+		}
+		if count, err := s.store.CountDistinctTeamChangesSince(org.ID, since7d); err == nil {
+			status.Changes7Days.Teams = count
+		}
+
+		orgStatuses = append(orgStatuses, status)
+	}
+
+	grafanaLastOK := "never"
+	if s.grafana != nil {
+		grafanaLastOK = formatTime(s.grafana.LastOK())
+	}
+	entraLastOK := "never"
+	if s.entra != nil {
+		entraLastOK = formatTime(s.entra.LastOK())
+	}
+
+	resp := apiStatus{
+		GeneratedAt:   now.Format(time.RFC3339),
+		GrafanaOK:     grafanaOK,
+		EntraOK:       entraOK,
+		GrafanaLastOK: grafanaLastOK,
+		EntraLastOK:   entraLastOK,
+		Orgs:          orgStatuses,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("api: status encode failed: %v", err)
+	}
 }
 
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
@@ -322,6 +507,23 @@ func (s *Server) handlePurgeMappings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("ui: purged mappings not in entra filter, deleted=%d", deleted)
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+func (s *Server) handleAutoSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	enabled := strings.EqualFold(r.FormValue("auto_sync"), "true")
+	if err := s.store.SetAutoSyncEnabled(enabled); err != nil {
+		http.Error(w, "failed to update auto sync setting", http.StatusInternalServerError)
+		return
+	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

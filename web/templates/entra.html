@@ -1,0 +1,69 @@
+{{define "content"}}
+<section class="card">
+  <h2>Entra Groups <span class="count">{{len .EntraGroups}}</span></h2>
+  {{if .EntraGroupsErr}}
+  <p class="muted">Entra group list error: {{.EntraGroupsErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Group ID</th>
+        <th>Mail</th>
+        <th>Type</th>
+        <th>Mapping</th>
+        <th>Grafana Team</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .EntraGroups}}
+      <tr>
+        <td>{{.DisplayName}}</td>
+        <td>{{.ID}}</td>
+        <td>{{.Mail}}</td>
+        <td>{{.SecurityType}}</td>
+        <td>{{.MappingState}}</td>
+        <td>{{if .MappingInfo}}{{.MappingInfo}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="6" class="muted">No groups found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Entra Users</h2>
+  {{if .EntraUsersErr}}
+  <p class="muted">Entra user list error: {{.EntraUsersErr}}</p>
+  {{end}}
+  <table>
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>UPN</th>
+        <th>Mail</th>
+        <th>Department</th>
+        <th>_grf_ Groups</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .EntraUsers}}
+      <tr>
+        <td>{{.DisplayName}}</td>
+        <td>{{.UPN}}</td>
+        <td>{{.Mail}}</td>
+        <td>{{.Department}}</td>
+        <td>{{if .Groups}}{{.Groups}}{{else}}-{{end}}</td>
+      </tr>
+      {{else}}
+      <tr>
+        <td colspan="5" class="muted">No users found.</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}

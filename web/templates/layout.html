@@ -11,8 +11,20 @@
     <div>
       <h1>Grafana AD/Entra Sync</h1>
       <p>Manage orgs, mappings, and run syncs.</p>
+      <nav class="top-nav">
+        <a href="/" class="{{if eq .CurrentPage "home"}}active{{end}}">Hauptseite</a>
+        <a href="/grafana" class="{{if eq .CurrentPage "grafana"}}active{{end}}">Grafana settings</a>
+        <a href="/entra" class="{{if eq .CurrentPage "entra"}}active{{end}}">EntraID settings</a>
+      </nav>
     </div>
     <div class="sync-actions">
+      <form action="/settings/auto-sync" method="post" class="auto-sync-toggle">
+        <label class="switch">
+          <input type="checkbox" name="auto_sync" value="true" {{if .AutoSyncEnabled}}checked{{end}}>
+          <span class="slider" aria-hidden="true"></span>
+          <span class="switch-text">Automatische Updates</span>
+        </label>
+      </form>
       <form action="/sync/run" method="post">
         <button type="submit" class="primary">Run sync now</button>
       </form>
@@ -42,5 +54,50 @@
   <footer>
     <span>Grafana Sync Service</span>
   </footer>
+
+  <div class="loading-overlay" role="status" aria-live="polite" aria-busy="true">
+    <div class="loading-card">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="loading-text">Working...</div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const body = document.body;
+      const setLoading = () => {
+        if (body.classList.contains("loading")) {
+          return false;
+        }
+        body.classList.add("loading");
+        const controls = document.querySelectorAll("button, input, select, textarea");
+        controls.forEach((el) => {
+          el.setAttribute("disabled", "disabled");
+        });
+        return true;
+      };
+
+      document.querySelectorAll("form").forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          if (!setLoading()) {
+            event.preventDefault();
+          }
+        });
+      });
+
+      document.querySelectorAll(".auto-sync-toggle input[type='checkbox']").forEach((toggle) => {
+        toggle.addEventListener("change", () => {
+          const form = toggle.closest("form");
+          if (form) {
+            if (typeof form.requestSubmit === "function") {
+              form.requestSubmit();
+            } else {
+              form.submit();
+            }
+          }
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

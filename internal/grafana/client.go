@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,6 +19,8 @@ type Client struct {
 	adminPassword string
 	adminToken    string
 	httpClient    *http.Client
+	mu            sync.Mutex
+	lastOK        time.Time
 }
 
 type User struct {
@@ -60,6 +63,12 @@ func New(baseURL, adminUser, adminPassword, adminToken string, insecureTLS bool)
 		adminToken:    adminToken,
 		httpClient:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
 	}
+}
+
+func (c *Client) LastOK() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastOK
 }
 
 func (c *Client) LookupUser(loginOrEmail string) (*User, bool, error) {
@@ -277,6 +286,10 @@ func (c *Client) doJSON(method, endpoint string, body any, out any) (int, error)
 		payload, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, fmt.Errorf("grafana: %s %s -> %d: %s", method, endpoint, resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
+
+	c.mu.Lock()
+	c.lastOK = time.Now().UTC()
+	c.mu.Unlock()
 
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

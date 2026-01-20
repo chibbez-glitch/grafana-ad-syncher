@@ -105,6 +105,9 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 			if err := s.store.UpdateMappingTeamIDForName(action.OrgID, action.TeamName, teamID); err != nil {
 				log.Printf("sync: update team id for %s failed: %v", action.TeamName, err)
 			}
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
+			}
 		case "create_user":
 			name := action.DisplayName
 			if name == "" {
@@ -115,9 +118,15 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 				return err
 			}
 			userIDs[email] = created.ID
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
+			}
 		case "add_user_to_org":
 			if err := s.grafana.AddUserToOrg(action.GrafanaOrgID, email, action.Role); err != nil {
 				return err
+			}
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
 			}
 		case "update_user_role":
 			id := action.UserID
@@ -141,6 +150,9 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 					}
 					return err
 				}
+			}
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
 			}
 		case "add_user_to_team":
 			teamID := action.TeamID
@@ -168,6 +180,9 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 					return err
 				}
 			}
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
+			}
 		case "update_team_role":
 			teamID := action.TeamID
 			if teamID == 0 {
@@ -191,6 +206,9 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 					return err
 				}
 			}
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
+			}
 		case "remove_user_from_team":
 			teamID := action.TeamID
 			if teamID == 0 {
@@ -213,6 +231,9 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 				if err := s.grafana.RemoveUserFromTeam(teamID, id); err != nil {
 					return err
 				}
+			}
+			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+				log.Printf("sync: record action failed: %v", err)
 			}
 		default:
 			continue
