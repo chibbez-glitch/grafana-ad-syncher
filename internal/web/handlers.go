@@ -619,10 +619,16 @@ func (s *Server) handleUpdateMapping(w http.ResponseWriter, r *http.Request) {
 	teamName := r.FormValue("grafana_team_name")
 	externalGroupID := r.FormValue("external_group_id")
 	externalGroupName := r.FormValue("external_group_name")
-	if externalGroupID == "" && externalGroupName == "" && id != 0 {
+	var existingMapping *store.Mapping
+	if id != 0 {
 		if existing, err := s.store.GetMapping(id); err == nil && existing != nil {
-			externalGroupID = existing.ExternalGroupID
-			externalGroupName = existing.ExternalGroupName
+			existingMapping = existing
+		}
+	}
+	if externalGroupID == "" && externalGroupName == "" && id != 0 {
+		if existingMapping != nil {
+			externalGroupID = existingMapping.ExternalGroupID
+			externalGroupName = existingMapping.ExternalGroupName
 		}
 	}
 	if externalGroupID == "" && externalGroupName != "" {
@@ -658,11 +664,15 @@ func (s *Server) handleUpdateMapping(w http.ResponseWriter, r *http.Request) {
 		teamRole = "member"
 	}
 	roleOverride := r.FormValue("role_override")
+	teamID := int64(0)
+	if existingMapping != nil && existingMapping.OrgID == orgID && strings.EqualFold(existingMapping.GrafanaTeamName, teamName) {
+		teamID = existingMapping.GrafanaTeamID
+	}
 	if err := s.store.UpdateMapping(store.Mapping{
 		ID:                id,
 		OrgID:             orgID,
 		GrafanaTeamName:   teamName,
-		GrafanaTeamID:     0,
+		GrafanaTeamID:     teamID,
 		ExternalGroupID:   externalGroupID,
 		ExternalGroupName: externalGroupName,
 		TeamRole:          teamRole,
