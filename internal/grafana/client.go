@@ -2,12 +2,15 @@ package grafana
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +20,8 @@ type Client struct {
 	adminPassword string
 	adminToken    string
 	httpClient    *http.Client
+	mu            sync.Mutex
+	lastOK        time.Time
 }
 
 type User struct {
@@ -31,14 +36,57 @@ type Team struct {
 	Name string `json:"name"`
 }
 
-func New(baseURL, adminUser, adminPassword, adminToken string) *Client {
+type TeamMember struct {
+	ID    int64  `json:"userId"`
+	Name  string `json:"name"`
+	Login string `json:"login"`
+	Email string `json:"email"`
+	Role  string `json:"role"`
+}
+
+type OrgUser struct {
+	ID    int64  `json:"userId"`
+	Login string `json:"login"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+}
+
+type Folder struct {
+	ID    int64  `json:"id"`
+	UID   string `json:"uid"`
+	Title string `json:"title"`
+}
+
+type FolderPermission struct {
+	ID             int64  `json:"id"`
+	Permission     int    `json:"permission"`
+	PermissionName string `json:"permissionName"`
+	TeamID         int64  `json:"teamId"`
+	Team           string `json:"team"`
+	UserID         int64  `json:"userId"`
+	User           string `json:"user"`
+	Role           string `json:"role"`
+}
+
+func New(baseURL, adminUser, adminPassword, adminToken string, insecureTLS bool) *Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if insecureTLS {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	return &Client{
 		baseURL:       strings.TrimRight(baseURL, "/"),
 		adminUser:     adminUser,
 		adminPassword: adminPassword,
 		adminToken:    adminToken,
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		httpClient:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
 	}
+}
+
+func (c *Client) LastOK() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastOK
 }
 
 func (c *Client) LookupUser(loginOrEmail string) (*User, bool, error) {
@@ -132,20 +180,107 @@ func (c *Client) SearchTeam(orgID int64, name string) (int64, bool, error) {
 	return 0, false, nil
 }
 
-func (c *Client) ListTeamMembers(teamID int64) ([]User, error) {
+func (c *Client) ListTeamMembers(teamID int64) ([]TeamMember, error) {
 	endpoint := fmt.Sprintf("%s/api/teams/%d/members", c.baseURL, teamID)
-	var members []User
+	var members []TeamMember
 	if _, err := c.doJSON("GET", endpoint, nil, &members); err != nil {
 		return nil, err
 	}
 	return members, nil
 }
 
-func (c *Client) AddUserToTeam(teamID, userID int64) error {
+func (c *Client) ListTeams(orgID int64) ([]Team, error) {
+	var teams []Team
+	page := 1
+	for {
+		endpoint := fmt.Sprintf("%s/api/teams/search?orgId=%d&page=%d&perpage=500", c.baseURL, orgID, page)
+		var resp struct {
+			Teams []Team `json:"teams"`
+		}
+		if _, err := c.doJSON("GET", endpoint, nil, &resp); err != nil {
+			return nil, err
+		}
+		if len(resp.Teams) == 0 {
+			break
+		}
+		teams = append(teams, resp.Teams...)
+		page++
+	}
+	return teams, nil
+}
+
+func (c *Client) ListAdminUsers() ([]User, error) {
+	var users []User
+	page := 1
+	for {
+		endpoint := fmt.Sprintf("%s/api/admin/users?page=%d&perpage=1000", c.baseURL, page)
+		var resp []User
+		if _, err := c.doJSON("GET", endpoint, nil, &resp); err != nil {
+			return nil, err
+		}
+		if len(resp) == 0 {
+			break
+		}
+		users = append(users, resp...)
+		page++
+	}
+	return users, nil
+}
+
+func (c *Client) ListOrgUsers(orgID int64) ([]OrgUser, error) {
+	endpoint := fmt.Sprintf("%s/api/orgs/%d/users", c.baseURL, orgID)
+	var users []OrgUser
+	if _, err := c.doJSON("GET", endpoint, nil, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+func (c *Client) ListFolders(orgID int64) ([]Folder, error) {
+	endpoint := fmt.Sprintf("%s/api/folders", c.baseURL)
+	var folders []Folder
+	headers := map[string]string{
+		"X-Grafana-Org-Id": strconv.FormatInt(orgID, 10),
+	}
+	if _, err := c.doJSONWithHeaders("GET", endpoint, headers, nil, &folders); err != nil {
+		return nil, err
+	}
+	return folders, nil
+}
+
+func (c *Client) ListFolderPermissions(orgID int64, folderUID string) ([]FolderPermission, error) {
+	endpoint := fmt.Sprintf("%s/api/folders/%s/permissions", c.baseURL, url.PathEscape(folderUID))
+	var perms []FolderPermission
+	headers := map[string]string{
+		"X-Grafana-Org-Id": strconv.FormatInt(orgID, 10),
+	}
+	if _, err := c.doJSONWithHeaders("GET", endpoint, headers, nil, &perms); err != nil {
+		return nil, err
+	}
+	return perms, nil
+}
+
+func (c *Client) AddUserToTeam(teamID, userID int64, role string) error {
 	endpoint := fmt.Sprintf("%s/api/teams/%d/members", c.baseURL, teamID)
-	payload := map[string]int64{"userId": userID}
+	payload := map[string]any{"userId": userID}
+	if strings.EqualFold(role, "admin") {
+		payload["role"] = "Admin"
+	}
 	status, err := c.doJSON("POST", endpoint, payload, nil)
 	if err != nil && status != http.StatusConflict {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) UpdateTeamMemberRole(teamID, userID int64, role string) error {
+	endpoint := fmt.Sprintf("%s/api/teams/%d/members/%d", c.baseURL, teamID, userID)
+	payload := map[string]string{"role": "Member"}
+	if strings.EqualFold(role, "admin") {
+		payload["role"] = "Admin"
+	}
+	status, err := c.doJSON("PUT", endpoint, payload, nil)
+	if err != nil && status != http.StatusNotFound {
 		return err
 	}
 	return nil
@@ -161,6 +296,10 @@ func (c *Client) RemoveUserFromTeam(teamID, userID int64) error {
 }
 
 func (c *Client) doJSON(method, endpoint string, body any, out any) (int, error) {
+	return c.doJSONWithHeaders(method, endpoint, nil, body, out)
+}
+
+func (c *Client) doJSONWithHeaders(method, endpoint string, headers map[string]string, body any, out any) (int, error) {
 	var reader io.Reader
 	if body != nil {
 		buf := &bytes.Buffer{}
@@ -182,6 +321,12 @@ func (c *Client) doJSON(method, endpoint string, body any, out any) (int, error)
 	} else if c.adminUser != "" || c.adminPassword != "" {
 		req.SetBasicAuth(c.adminUser, c.adminPassword)
 	}
+	for key, value := range headers {
+		if key == "" {
+			continue
+		}
+		req.Header.Set(key, value)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -193,6 +338,10 @@ func (c *Client) doJSON(method, endpoint string, body any, out any) (int, error)
 		payload, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, fmt.Errorf("grafana: %s %s -> %d: %s", method, endpoint, resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
+
+	c.mu.Lock()
+	c.lastOK = time.Now().UTC()
+	c.mu.Unlock()
 
 	if out != nil {
 		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

@@ -1,0 +1,39 @@
+{{define "content-folders"}}
+<section class="card">
+  <h2>Folder Permissions</h2>
+  {{if .FolderPermsErr}}
+  <p class="muted">Grafana folder permission error: {{.FolderPermsErr}}</p>
+  {{end}}
+  {{if .FolderPerms}}
+    {{range .FolderPerms}}
+    <div class="group-block">
+      <h3>{{if .OrgName}}{{.OrgName}}{{else}}Org {{.OrgID}}{{end}} · {{.FolderTitle}}</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>Type</th>
+            <th>Permission</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Entries}}
+          <tr>
+            <td>{{.Subject}}</td>
+            <td>{{.SubjectType}}</td>
+            <td>{{.Permission}}</td>
+          </tr>
+          {{else}}
+          <tr>
+            <td colspan="3" class="muted">No permissions found.</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+  {{else}}
+  <p class="muted">No folders found.</p>
+  {{end}}
+</section>
+{{end}}

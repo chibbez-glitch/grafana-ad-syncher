@@ -30,7 +30,7 @@ func main() {
 	}
 	defer st.Close()
 
-	grafanaClient := grafana.New(cfg.GrafanaURL, cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword, cfg.GrafanaAdminToken)
+	grafanaClient := grafana.New(cfg.GrafanaURL, cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword, cfg.GrafanaAdminToken, cfg.GrafanaInsecureTLS)
 	entraClient := entra.New(cfg.EntraTenantID, cfg.EntraClientID, cfg.EntraClientSecret, cfg.EntraAuthorityBaseURL, cfg.GraphAPIBaseURL)
 	clientSyncer := syncer.New(st, grafanaClient, entraClient, cfg.DefaultUserRole, cfg.AllowCreateUsers, cfg.AllowRemoveMembers)
 
@@ -39,8 +39,13 @@ func main() {
 			ticker := time.NewTicker(cfg.SyncInterval)
 			defer ticker.Stop()
 			for {
-				if err := clientSyncer.Run(); err != nil {
-					log.Printf("scheduled sync failed: %v", err)
+				enabled, err := st.AutoSyncEnabled()
+				if err != nil {
+					log.Printf("auto sync status lookup failed: %v", err)
+				} else if enabled {
+					if err := clientSyncer.Run(); err != nil {
+						log.Printf("scheduled sync failed: %v", err)
+					}
 				}
 				<-ticker.C
 			}
@@ -48,7 +53,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
-	server, err := web.New(st, clientSyncer, filepath.Join("web", "templates"))
+	server, err := web.New(st, clientSyncer, grafanaClient, entraClient, filepath.Join("web", "templates"))
 	if err != nil {
 		log.Fatalf("templates: %v", err)
 	}
@@ -59,7 +64,7 @@ func main() {
 		Addr:         cfg.ListenAddr,
 		Handler:      mux,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 2 * time.Minute,
 		IdleTimeout:  60 * time.Second,
 	}
 

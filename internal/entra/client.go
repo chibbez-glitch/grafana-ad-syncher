@@ -24,6 +24,9 @@ type Client struct {
 	mu          sync.Mutex
 	accessToken string
 	expiresAt   time.Time
+
+	lastOKMu sync.Mutex
+	lastOK   time.Time
 }
 
 type Member struct {
@@ -31,6 +34,23 @@ type Member struct {
 	DisplayName string `json:"displayName"`
 	Mail        string `json:"mail"`
 	UPN         string `json:"userPrincipalName"`
+	Department  string `json:"department"`
+}
+
+type Group struct {
+	ID              string `json:"id"`
+	DisplayName     string `json:"displayName"`
+	Mail            string `json:"mail"`
+	SecurityEnabled bool   `json:"securityEnabled"`
+	MailEnabled     bool   `json:"mailEnabled"`
+}
+
+type User struct {
+	ID             string `json:"id"`
+	DisplayName    string `json:"displayName"`
+	Mail           string `json:"mail"`
+	UPN            string `json:"userPrincipalName"`
+	AccountEnabled bool   `json:"accountEnabled"`
 }
 
 func New(tenantID, clientID, clientSecret, authBase, graphBase string) *Client {
@@ -44,13 +64,19 @@ func New(tenantID, clientID, clientSecret, authBase, graphBase string) *Client {
 	}
 }
 
+func (c *Client) LastOK() time.Time {
+	c.lastOKMu.Lock()
+	defer c.lastOKMu.Unlock()
+	return c.lastOK
+}
+
 func (c *Client) ListGroupMembers(groupID string) ([]Member, error) {
 	token, err := c.getToken()
 	if err != nil {
 		return nil, err
 	}
 
-	endpoint := fmt.Sprintf("%s/groups/%s/members?$select=id,displayName,mail,userPrincipalName", c.graphBase, url.PathEscape(groupID))
+	endpoint := fmt.Sprintf("%s/groups/%s/members?$select=id,displayName,mail,userPrincipalName,department", c.graphBase, url.PathEscape(groupID))
 	var members []Member
 	for endpoint != "" {
 		resp, err := c.doRequest("GET", endpoint, token, nil)
@@ -62,12 +88,70 @@ func (c *Client) ListGroupMembers(groupID string) ([]Member, error) {
 			NextLink string   `json:"@odata.nextLink"`
 		}
 		if err := json.NewDecoder(resp).Decode(&page); err != nil {
+			_ = resp.Close()
 			return nil, err
 		}
+		_ = resp.Close()
 		members = append(members, page.Value...)
 		endpoint = page.NextLink
 	}
 	return members, nil
+}
+
+func (c *Client) ListGroups() ([]Group, error) {
+	token, err := c.getToken()
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/groups?$select=id,displayName,mail,securityEnabled,mailEnabled", c.graphBase)
+	var groups []Group
+	for endpoint != "" {
+		resp, err := c.doRequest("GET", endpoint, token, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Value    []Group `json:"value"`
+			NextLink string  `json:"@odata.nextLink"`
+		}
+		if err := json.NewDecoder(resp).Decode(&page); err != nil {
+			_ = resp.Close()
+			return nil, err
+		}
+		_ = resp.Close()
+		groups = append(groups, page.Value...)
+		endpoint = page.NextLink
+	}
+	return groups, nil
+}
+
+func (c *Client) ListUsers() ([]User, error) {
+	token, err := c.getToken()
+	if err != nil {
+		return nil, err
+	}
+
+	endpoint := fmt.Sprintf("%s/users?$select=id,displayName,mail,userPrincipalName,accountEnabled", c.graphBase)
+	var users []User
+	for endpoint != "" {
+		resp, err := c.doRequest("GET", endpoint, token, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			Value    []User `json:"value"`
+			NextLink string `json:"@odata.nextLink"`
+		}
+		if err := json.NewDecoder(resp).Decode(&page); err != nil {
+			_ = resp.Close()
+			return nil, err
+		}
+		_ = resp.Close()
+		users = append(users, page.Value...)
+		endpoint = page.NextLink
+	}
+	return users, nil
 }
 
 func (c *Client) getToken() (string, error) {
@@ -151,5 +235,8 @@ func (c *Client) doRequest(method, endpoint, token string, body any) (io.ReadClo
 		_ = resp.Body.Close()
 		return nil, fmt.Errorf("entra: %s %s -> %d: %s", method, endpoint, resp.StatusCode, strings.TrimSpace(string(payload)))
 	}
+	c.lastOKMu.Lock()
+	c.lastOK = time.Now().UTC()
+	c.lastOKMu.Unlock()
 	return resp.Body, nil
 }

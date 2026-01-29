@@ -11,13 +11,35 @@
     <div>
       <h1>Grafana AD/Entra Sync</h1>
       <p>Manage orgs, mappings, and run syncs.</p>
+      <nav class="top-nav">
+        <a href="/" class="{{if eq .CurrentPage "home"}}active{{end}}">Sync-Dashboard</a>
+        <a href="/grafana" class="{{if eq .CurrentPage "grafana"}}active{{end}}">Grafana settings</a>
+        <a href="/entra" class="{{if eq .CurrentPage "entra"}}active{{end}}">EntraID settings</a>
+        <a href="/folders" class="{{if eq .CurrentPage "folders"}}active{{end}}">Folder permissions</a>
+      </nav>
     </div>
     <div class="sync-actions">
+      <form action="/settings/auto-sync" method="post" class="auto-sync-toggle">
+        <label class="switch">
+          <input type="checkbox" name="auto_sync" value="true" {{if .AutoSyncEnabled}}checked{{end}}>
+          <span class="slider" aria-hidden="true"></span>
+          <span class="switch-text">Automatische Updates</span>
+        </label>
+      </form>
+      <form action="/sync/fetch" method="post">
+        <button type="submit" class="soft" title="Fetches the latest EntraID and Grafana data.">1. Fetch EntraID + Grafana</button>
+      </form>
+      <form action="/sync/clear" method="post">
+        <button type="submit" class="ghost" title="Clears the stored plan without applying it.">2. Clear plan</button>
+      </form>
       <form action="/sync/preview" method="post">
-        <button type="submit" class="primary">Preview sync</button>
+        <button type="submit" class="ghost" title="Builds a plan without applying any changes.">3. Calc change plan</button>
       </form>
       <form action="/sync/apply" method="post">
-        <button type="submit" class="ghost">Apply plan</button>
+        <button type="submit" class="ghost" title="Applies the last previewed plan.">4. Apply all changes</button>
+      </form>
+      <form action="/sync/run" method="post">
+        <button type="submit" class="primary" title="Builds a plan and applies it immediately.">Sync, Calc and Apply all</button>
       </form>
       <div class="status">
         <span>Last run: {{.LastRun}}</span>
@@ -30,11 +52,57 @@
   </header>
 
   <main>
-    {{template "content" .}}
+    {{if eq .ContentTemplate "content-grafana"}}
+      {{template "content-grafana" .}}
+    {{else if eq .ContentTemplate "content-entra"}}
+      {{template "content-entra" .}}
+    {{else if eq .ContentTemplate "content-folders"}}
+      {{template "content-folders" .}}
+    {{else}}
+      {{template "content-index" .}}
+    {{end}}
   </main>
 
   <footer>
     <span>Grafana Sync Service</span>
   </footer>
+
+  <script>
+    (function () {
+      const body = document.body;
+      const setLoading = () => {
+        if (body.classList.contains("loading")) {
+          return false;
+        }
+        body.classList.add("loading");
+        const controls = document.querySelectorAll("button");
+        controls.forEach((el) => {
+          el.setAttribute("disabled", "disabled");
+        });
+        return true;
+      };
+
+      document.querySelectorAll("form").forEach((form) => {
+        form.addEventListener("submit", (event) => {
+          if (!setLoading()) {
+            event.preventDefault();
+          }
+        });
+      });
+
+      document.querySelectorAll(".auto-sync-toggle input[type='checkbox']").forEach((toggle) => {
+        toggle.addEventListener("change", () => {
+          const form = toggle.closest("form");
+          if (form) {
+            if (typeof form.requestSubmit === "function") {
+              form.requestSubmit();
+            } else {
+              form.submit();
+            }
+          }
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

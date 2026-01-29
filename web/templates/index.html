@@ -1,62 +1,11 @@
-{{define "content"}}
-<section class="card">
-  <h2>Grafana Orgs</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Grafana Org ID</th>
-        <th>Name</th>
-        <th>Default Role</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Orgs}}
-      <tr>
-        <td>{{.ID}}</td>
-        <td>{{.GrafanaOrgID}}</td>
-        <td>{{.Name}}</td>
-        <td>{{.DefaultRole}}</td>
-        <td>
-          <form action="/orgs/delete" method="post">
-            <input type="hidden" name="id" value="{{.ID}}" />
-            <button type="submit" class="ghost">Delete</button>
-          </form>
-        </td>
-      </tr>
-      {{else}}
-      <tr>
-        <td colspan="5" class="muted">No orgs yet.</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
-
-  <h3>Add org</h3>
-  <form action="/orgs" method="post" class="grid">
-    <label>
-      <span>Grafana Org ID</span>
-      <input type="number" name="grafana_org_id" required />
-    </label>
-    <label>
-      <span>Name</span>
-      <input type="text" name="name" />
-    </label>
-    <label>
-      <span>Default Role</span>
-      <select name="default_role">
-        <option>Viewer</option>
-        <option>Editor</option>
-        <option>Admin</option>
-      </select>
-    </label>
-    <button type="submit" class="primary">Add org</button>
-  </form>
-</section>
-
+{{define "content-index"}}
 <section class="card">
   <h2>Group to Team Mappings</h2>
+  <div class="actions">
+    <form action="/mappings/purge" method="post">
+      <button type="submit" class="ghost">Purge non-matching Entra groups</button>
+    </form>
+  </div>
   <table>
     <thead>
       <tr>
@@ -66,30 +15,93 @@
         <th>Team ID</th>
         <th>Entra Group ID</th>
         <th>Entra Group Name</th>
-        <th>Role</th>
+        <th>Team Role</th>
+        <th>Org Role</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
       {{range .Mappings}}
-      <tr>
-        <td>{{.ID}}</td>
-        <td>{{.OrgID}}</td>
-        <td>{{.GrafanaTeamName}}</td>
-        <td>{{.GrafanaTeamID}}</td>
-        <td>{{.ExternalGroupID}}</td>
-        <td>{{.ExternalGroupName}}</td>
-        <td>{{if .RoleOverride}}{{.RoleOverride}}{{else}}(org default){{end}}</td>
+      {{$mapping := .}}
+      {{$grafanaOrgID := 0}}
+      {{range $.Orgs}}
+      {{if eq .ID $mapping.OrgID}}
+      {{$grafanaOrgID = .GrafanaOrgID}}
+      {{end}}
+      {{end}}
+      <tr class="mapping-row" data-mapping-id="{{$mapping.ID}}">
+        <td>{{$mapping.ID}}</td>
         <td>
-          <form action="/mappings/delete" method="post">
-            <input type="hidden" name="id" value="{{.ID}}" />
-            <button type="submit" class="ghost">Delete</button>
-          </form>
+          <span class="view-only">{{$mapping.OrgID}}</span>
+          <select class="edit-only" name="org_id" form="mapping-edit-{{$mapping.ID}}" data-role="org-select">
+            {{range $.Orgs}}
+            <option value="{{.ID}}" data-grafana-org="{{.GrafanaOrgID}}" {{if eq .ID $mapping.OrgID}}selected{{end}}>{{.GrafanaOrgID}} - {{.Name}}</option>
+            {{end}}
+          </select>
+        </td>
+        <td>
+          <span class="view-only">{{$mapping.GrafanaTeamName}}</span>
+          <select class="edit-only" name="grafana_team_name" form="mapping-edit-{{$mapping.ID}}" data-role="team-select">
+            <option value="{{$mapping.GrafanaTeamName}}" data-org="{{$grafanaOrgID}}" selected>{{$mapping.GrafanaTeamName}}</option>
+            {{range $.GrafanaTeams}}
+            {{if ne .TeamName $mapping.GrafanaTeamName}}
+            <option value="{{.TeamName}}" data-org="{{.OrgID}}">{{.OrgID}} - {{.TeamName}}</option>
+            {{end}}
+            {{end}}
+          </select>
+        </td>
+        <td>{{$mapping.GrafanaTeamID}}</td>
+        <td>
+          <span class="view-only">{{$mapping.ExternalGroupID}}</span>
+          <input type="hidden" name="external_group_id" form="mapping-edit-{{$mapping.ID}}" value="{{$mapping.ExternalGroupID}}" data-role="group-id-input" />
+        </td>
+        <td>
+          <span class="view-only">{{$mapping.ExternalGroupName}}</span>
+          <select class="edit-only" name="external_group_name" form="mapping-edit-{{$mapping.ID}}" data-role="group-name-select">
+            <option value="{{if $mapping.ExternalGroupName}}{{$mapping.ExternalGroupName}}{{else}}{{$mapping.ExternalGroupID}}{{end}}" data-id="{{$mapping.ExternalGroupID}}" selected>{{if $mapping.ExternalGroupName}}{{$mapping.ExternalGroupName}}{{else}}{{$mapping.ExternalGroupID}}{{end}}</option>
+            {{range $.EntraGroups}}
+            {{if ne .ID $mapping.ExternalGroupID}}
+            <option value="{{.DisplayName}}" data-id="{{.ID}}">{{.DisplayName}}</option>
+            {{end}}
+            {{end}}
+          </select>
+        </td>
+        <td>
+          <span class="view-only">{{if $mapping.TeamRole}}{{$mapping.TeamRole}}{{else}}member{{end}}</span>
+          <select class="edit-only" name="team_role" form="mapping-edit-{{$mapping.ID}}">
+            <option value="member" {{if or (eq $mapping.TeamRole "") (eq $mapping.TeamRole "member")}}selected{{end}}>Member</option>
+            <option value="admin" {{if eq $mapping.TeamRole "admin"}}selected{{end}}>Admin</option>
+          </select>
+        </td>
+        <td>
+          <span class="view-only">{{if $mapping.RoleOverride}}{{$mapping.RoleOverride}}{{else}}(org default){{end}}</span>
+          <select class="edit-only" name="role_override" form="mapping-edit-{{$mapping.ID}}">
+            <option value="" {{if eq $mapping.RoleOverride ""}}selected{{end}}>(org default)</option>
+            <option value="Viewer" {{if eq $mapping.RoleOverride "Viewer"}}selected{{end}}>Viewer</option>
+            <option value="Editor" {{if eq $mapping.RoleOverride "Editor"}}selected{{end}}>Editor</option>
+            <option value="Admin" {{if eq $mapping.RoleOverride "Admin"}}selected{{end}}>Admin</option>
+          </select>
+        </td>
+        <td class="mapping-actions">
+          <div class="view-only">
+            <button type="button" class="ghost" data-action="edit">Edit</button>
+            <form action="/mappings/delete" method="post">
+              <input type="hidden" name="id" value="{{$mapping.ID}}" />
+              <button type="submit" class="ghost">Delete</button>
+            </form>
+          </div>
+          <div class="edit-only">
+            <form action="/mappings/update" method="post" id="mapping-edit-{{$mapping.ID}}">
+              <input type="hidden" name="id" value="{{$mapping.ID}}" />
+              <button type="submit" class="primary">Save</button>
+              <button type="button" class="ghost" data-action="cancel">Cancel</button>
+            </form>
+          </div>
         </td>
       </tr>
       {{else}}
       <tr>
-        <td colspan="8" class="muted">No mappings yet.</td>
+        <td colspan="9" class="muted">No mappings yet.</td>
       </tr>
       {{end}}
     </tbody>
@@ -99,26 +111,40 @@
   <form action="/mappings" method="post" class="grid">
     <label>
       <span>Org</span>
-      <select name="org_id" required>
+      <select name="org_id" required data-role="org-select">
         {{range .Orgs}}
-        <option value="{{.ID}}">{{.GrafanaOrgID}} - {{.Name}}</option>
+        <option value="{{.ID}}" data-grafana-org="{{.GrafanaOrgID}}">{{.GrafanaOrgID}} - {{.Name}}</option>
         {{end}}
       </select>
     </label>
     <label>
       <span>Grafana Team Name</span>
-      <input type="text" name="grafana_team_name" required />
-    </label>
-    <label>
-      <span>Entra Group ID</span>
-      <input type="text" name="external_group_id" required />
+      <select name="grafana_team_name" required data-role="team-select">
+        <option value="">Select team...</option>
+        {{range .GrafanaTeams}}
+        <option value="{{.TeamName}}" data-org="{{.OrgID}}">{{.OrgID}} - {{.TeamName}}</option>
+        {{end}}
+      </select>
     </label>
     <label>
       <span>Entra Group Name</span>
-      <input type="text" name="external_group_name" />
+      <select name="external_group_name" required data-role="group-name-select">
+        <option value="">Select group...</option>
+        {{range .EntraGroups}}
+        <option value="{{.DisplayName}}" data-id="{{.ID}}">{{.DisplayName}}</option>
+        {{end}}
+      </select>
+    </label>
+    <input type="hidden" name="external_group_id" data-role="group-id-input" />
+    <label>
+      <span>Team Role</span>
+      <select name="team_role">
+        <option value="member">Member</option>
+        <option value="admin">Admin</option>
+      </select>
     </label>
     <label>
-      <span>Role Override</span>
+      <span>Org Role Override</span>
       <select name="role_override">
         <option value="">(org default)</option>
         <option>Viewer</option>
@@ -130,37 +156,144 @@
   </form>
 </section>
 
+  <script>
+  (function () {
+    const orgSelect = document.querySelector('[data-role="org-select"]');
+    const teamSelect = document.querySelector('[data-role="team-select"]');
+    const groupIdInput = document.querySelector('[data-role="group-id-input"]');
+    const groupNameSelect = document.querySelector('[data-role="group-name-select"]');
+
+    const filterTeams = () => {
+      if (!orgSelect || !teamSelect) return;
+      const orgLabel = orgSelect.options[orgSelect.selectedIndex];
+      const orgID = orgLabel ? orgLabel.dataset.grafanaOrg : "";
+      Array.from(teamSelect.options).forEach((opt) => {
+        if (!opt.value) return;
+        opt.hidden = orgID && opt.dataset.org !== orgID;
+      });
+      if (teamSelect.selectedOptions.length && teamSelect.selectedOptions[0].hidden) {
+        teamSelect.value = "";
+      }
+    };
+
+    if (orgSelect) {
+      orgSelect.addEventListener("change", filterTeams);
+      filterTeams();
+    }
+    if (groupIdInput && groupNameSelect) {
+      const syncGroupID = () => {
+        const selected = groupNameSelect.selectedOptions[0];
+        groupIdInput.value = selected ? selected.dataset.id || "" : "";
+      };
+      groupNameSelect.addEventListener("change", syncGroupID);
+      syncGroupID();
+    }
+
+    const bindRow = (row) => {
+      const orgSelect = row.querySelector('[data-role="org-select"]');
+      const teamSelect = row.querySelector('[data-role="team-select"]');
+      const groupNameSelect = row.querySelector('[data-role="group-name-select"]');
+      const groupIdInput = row.querySelector('[data-role="group-id-input"]');
+      const filterTeams = () => {
+        if (!orgSelect || !teamSelect) return;
+        const orgOption = orgSelect.options[orgSelect.selectedIndex];
+        const orgID = orgOption ? orgOption.dataset.grafanaOrg : "";
+        Array.from(teamSelect.options).forEach((opt) => {
+          opt.hidden = orgID && opt.dataset.org !== orgID;
+        });
+        if (teamSelect.selectedOptions.length && teamSelect.selectedOptions[0].hidden) {
+          teamSelect.value = "";
+        }
+      };
+      const syncGroupID = () => {
+        if (!groupIdInput || !groupNameSelect) return;
+        const selected = groupNameSelect.selectedOptions[0];
+        if (!selected) {
+          return;
+        }
+        if (selected.dataset.id) {
+          groupIdInput.value = selected.dataset.id;
+          return;
+        }
+        const match = Array.from(groupNameSelect.options).find((opt) => opt.dataset.id && opt.value === selected.value);
+        if (match) {
+          groupNameSelect.value = match.value;
+          groupIdInput.value = match.dataset.id;
+        }
+      };
+      if (orgSelect) {
+        orgSelect.addEventListener("change", filterTeams);
+      }
+      if (groupNameSelect) {
+        groupNameSelect.addEventListener("change", syncGroupID);
+      }
+      filterTeams();
+      syncGroupID();
+    };
+
+    document.querySelectorAll(".mapping-row").forEach((row) => {
+      const editBtn = row.querySelector('[data-action="edit"]');
+      const cancelBtn = row.querySelector('[data-action="cancel"]');
+      if (editBtn) {
+        editBtn.addEventListener("click", () => {
+          row.classList.add("is-editing");
+          bindRow(row);
+        });
+      }
+      if (cancelBtn) {
+        cancelBtn.addEventListener("click", () => {
+          row.classList.remove("is-editing");
+        });
+      }
+    });
+  })();
+</script>
+
 {{if .Plan}}
 <section class="card">
-  <h2>Planned Actions</h2>
-  <table>
-    <thead>
-      <tr>
-        <th>Type</th>
-        <th>Org</th>
-        <th>Team</th>
-        <th>Email</th>
-        <th>Role</th>
-        <th>Note</th>
-      </tr>
-    </thead>
-    <tbody>
-      {{range .Plan.Actions}}
-      <tr>
-        <td>{{.ActionType}}</td>
-        <td>{{.GrafanaOrgID}}</td>
-        <td>{{.TeamName}}</td>
-        <td>{{.Email}}</td>
-        <td>{{.Role}}</td>
-        <td>{{.Note}}</td>
-      </tr>
-      {{else}}
-      <tr>
-        <td colspan="6" class="muted">No actions in plan.</td>
-      </tr>
-      {{end}}
-    </tbody>
-  </table>
+  <h2>Planned Actions (Grouped)</h2>
+  <form action="/sync/apply-selected" method="post">
+    {{if .PlanGroups}}
+    {{range .PlanGroups}}
+    <div class="group-block">
+      <h3>{{.Title}}</h3>
+      <table>
+        <thead>
+          <tr>
+            <th></th>
+            <th>Action</th>
+            <th>Email</th>
+            <th>Org Role</th>
+            <th>Team Role</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{range .Actions}}
+          <tr class="{{.Class}}">
+            <td>
+              <input type="checkbox" name="action_id" value="{{.ID}}" {{if not .Selectable}}disabled{{end}} />
+            </td>
+            <td>{{actionLabel .Type}}</td>
+            <td>{{.Email}}</td>
+            <td>{{.Role}}</td>
+            <td>{{.TeamRole}}</td>
+            <td>{{.Note}}</td>
+          </tr>
+          {{else}}
+          <tr>
+            <td colspan="6" class="muted">No actions in this group.</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{end}}
+    <button type="submit" class="primary">Apply selected</button>
+    {{else}}
+    <p class="muted">No actions in plan.</p>
+    {{end}}
+  </form>
 </section>
 {{end}}
 {{end}}
