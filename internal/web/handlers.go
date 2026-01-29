@@ -566,7 +566,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	if defaultRole == "" {
 		defaultRole = "Viewer"
 	}
-	_, err := s.store.CreateOrg(store.Org{GrafanaOrgID: orgID, Name: name, DefaultRole: defaultRole})
+	_, err = s.store.CreateOrg(store.Org{GrafanaOrgID: orgID, Name: name, DefaultRole: defaultRole})
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to create org: %v", err), http.StatusBadRequest)
 		return
@@ -632,7 +632,7 @@ func (s *Server) handleCreateMapping(w http.ResponseWriter, r *http.Request) {
 		teamRole = "member"
 	}
 	roleOverride := r.FormValue("role_override")
-	_, err := s.store.CreateMapping(store.Mapping{
+	_, err = s.store.CreateMapping(store.Mapping{
 		OrgID:             orgID,
 		GrafanaTeamName:   teamName,
 		ExternalGroupID:   externalGroupID,
