@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"html/template"
 	"log"
 	"net/http"
@@ -55,17 +56,17 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	orgs, err := s.store.ListOrgs()
 	if err != nil {
-		http.Error(w, "failed to load orgs", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to load orgs: %v", err), http.StatusInternalServerError)
 		return
 	}
 	mappings, err := s.store.ListMappings()
 	if err != nil {
-		http.Error(w, "failed to load mappings", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to load mappings: %v", err), http.StatusInternalServerError)
 		return
 	}
 	plan, err := s.store.LatestPlan()
 	if err != nil {
-		http.Error(w, "failed to load plan", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to load plan: %v", err), http.StatusInternalServerError)
 		return
 	}
 	lastRun, lastStatus := s.syncer.LastRun()
@@ -87,10 +88,14 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("invalid form: %v", err), http.StatusBadRequest)
 		return
 	}
-	orgID, _ := strconv.ParseInt(r.FormValue("grafana_org_id"), 10, 64)
+	orgID, err := strconv.ParseInt(r.FormValue("grafana_org_id"), 10, 64)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid grafana org id: %v", err), http.StatusBadRequest)
+		return
+	}
 	name := r.FormValue("name")
 	defaultRole := r.FormValue("default_role")
 	if defaultRole == "" {
@@ -98,7 +103,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err := s.store.CreateOrg(store.Org{GrafanaOrgID: orgID, Name: name, DefaultRole: defaultRole})
 	if err != nil {
-		http.Error(w, "failed to create org", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("failed to create org: %v", err), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -110,12 +115,16 @@ func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("invalid form: %v", err), http.StatusBadRequest)
 		return
 	}
-	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid org id: %v", err), http.StatusBadRequest)
+		return
+	}
 	if err := s.store.DeleteOrg(id); err != nil {
-		http.Error(w, "failed to delete org", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("failed to delete org: %v", err), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -127,10 +136,14 @@ func (s *Server) handleCreateMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("invalid form: %v", err), http.StatusBadRequest)
 		return
 	}
-	orgID, _ := strconv.ParseInt(r.FormValue("org_id"), 10, 64)
+	orgID, err := strconv.ParseInt(r.FormValue("org_id"), 10, 64)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid org id: %v", err), http.StatusBadRequest)
+		return
+	}
 	teamName := r.FormValue("grafana_team_name")
 	externalGroupID := r.FormValue("external_group_id")
 	externalGroupName := r.FormValue("external_group_name")
@@ -143,7 +156,7 @@ func (s *Server) handleCreateMapping(w http.ResponseWriter, r *http.Request) {
 		RoleOverride:      roleOverride,
 	})
 	if err != nil {
-		http.Error(w, "failed to create mapping", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("failed to create mapping: %v", err), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -155,12 +168,16 @@ func (s *Server) handleDeleteMapping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("invalid form: %v", err), http.StatusBadRequest)
 		return
 	}
-	id, _ := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid mapping id: %v", err), http.StatusBadRequest)
+		return
+	}
 	if err := s.store.DeleteMapping(id); err != nil {
-		http.Error(w, "failed to delete mapping", http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("failed to delete mapping: %v", err), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -173,11 +190,11 @@ func (s *Server) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := s.syncer.BuildPlan()
 	if err != nil {
-		http.Error(w, "failed to build plan", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to build plan: %v", err), http.StatusInternalServerError)
 		return
 	}
 	if _, err := s.store.ReplacePlan(*plan); err != nil {
-		http.Error(w, "failed to store plan", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to store plan: %v", err), http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
@@ -190,7 +207,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := s.store.LatestPlan()
 	if err != nil {
-		http.Error(w, "failed to load plan", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to load plan: %v", err), http.StatusInternalServerError)
 		return
 	}
 	if plan == nil {
@@ -204,7 +221,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	s.syncer.RecordRun(err)
 	if err != nil {
 		_ = s.store.UpdatePlanStatus(plan.ID, "failed")
-		http.Error(w, "apply failed", http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("apply failed: %v", err), http.StatusInternalServerError)
 		return
 	}
 	_ = s.store.UpdatePlanStatus(plan.ID, "applied")
