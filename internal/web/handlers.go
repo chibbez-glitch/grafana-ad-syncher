@@ -176,6 +176,7 @@ func (s *Server) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/mappings/purge", s.handlePurgeMappings)
 	mux.HandleFunc("/entra/group/members", s.handleEntraGroupMembers)
 	mux.HandleFunc("/settings/auto-sync", s.handleAutoSync)
+	mux.HandleFunc("/api/sync/pending", s.handleSyncPending)
 	mux.HandleFunc("/sync/preview", s.handlePreview)
 	mux.HandleFunc("/sync/run", s.handleRun)
 	mux.HandleFunc("/sync/apply", s.handleApply)
@@ -497,6 +498,52 @@ func (s *Server) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		log.Printf("api: status encode failed: %v", err)
+	}
+}
+
+func (s *Server) handleSyncPending(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	type pendingStatus struct {
+		GeneratedAt    string `json:"generated_at"`
+		PlanID         int64  `json:"plan_id"`
+		PlanStatus     string `json:"plan_status"`
+		TotalActions   int    `json:"total_actions"`
+		PendingActions int    `json:"pending_actions"`
+	}
+
+	plan, err := s.store.LatestPlan()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to load plan: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	var planID int64
+	var status string
+	totalActions := 0
+	pendingActions := 0
+	if plan != nil {
+		planID = plan.ID
+		status = plan.Status
+		totalActions = len(plan.Actions)
+		pendingActions = totalActions
+		if status == "applied" || status == "applied-selected" {
+			pendingActions = 0
+		}
+	}
+
+	resp := pendingStatus{
+		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
+		PlanID:         planID,
+		PlanStatus:     status,
+		TotalActions:   totalActions,
+		PendingActions: pendingActions,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		log.Printf("api: sync pending encode failed: %v", err)
 	}
 }
 
