@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_url="https://github.com/chibbez-glitch/grafana-ad-syncher.git"
 target_dir="/docker/grafana-ad-syncher"
-source_compose="/docker/grafana-ad-syncher/grafana-ad-syncher/deploy/docker-compose.yml"
+source_compose="/docker/grafana-ad-syncher/deploy/docker-compose.yml"
 tmp_compose="/tmp/docker-compose.yml"
 
 if [[ ! -f "$source_compose" ]]; then
