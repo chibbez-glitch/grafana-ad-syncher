@@ -20,6 +20,8 @@ services:
       ENTRA_TENANT_ID: "your-tenant-id"
       ENTRA_CLIENT_ID: "your-client-id"
       ENTRA_CLIENT_SECRET: "your-client-secret"
+    extra_hosts:
+      - "grafana-prd.advanzia.com:10.131.10.16"  # mirror /etc/hosts from host — containers don't inherit it
     ports:
       - "8085:8080"
     volumes:
