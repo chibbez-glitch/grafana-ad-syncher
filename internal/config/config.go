@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -24,10 +25,16 @@ type Config struct {
 	EntraClientSecret     string
 	EntraAuthorityBaseURL string
 	GraphAPIBaseURL       string
+
+	// AutoSyncOnStart, when AutoSyncOnStartSet is true, forces the store's
+	// auto-sync flag to that value on every container start. When unset, the
+	// existing store value (toggled via the web UI) is left alone.
+	AutoSyncOnStart    bool
+	AutoSyncOnStartSet bool
 }
 
 func Load() Config {
-	return Config{
+	cfg := Config{
 		ListenAddr:           getEnv("LISTEN_ADDR", ":8080"),
 		DataDir:              getEnv("DATA_DIR", "/data"),
 		SyncInterval:         getEnvDuration("SYNC_INTERVAL", 15*time.Minute),
@@ -46,6 +53,13 @@ func Load() Config {
 		EntraAuthorityBaseURL: getEnv("ENTRA_AUTHORITY_BASE_URL", "https://login.microsoftonline.com"),
 		GraphAPIBaseURL:       getEnv("GRAPH_API_BASE_URL", "https://graph.microsoft.com/v1.0"),
 	}
+	if raw, ok := os.LookupEnv("AUTO_SYNC_ON_START"); ok && strings.TrimSpace(raw) != "" {
+		if parsed, err := strconv.ParseBool(strings.TrimSpace(raw)); err == nil {
+			cfg.AutoSyncOnStart = parsed
+			cfg.AutoSyncOnStartSet = true
+		}
+	}
+	return cfg
 }
 
 func getEnv(key, fallback string) string {

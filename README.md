@@ -33,6 +33,7 @@ Recognised env vars (set on the `grafana-sync` container in the compose file):
 - `ENTRA_CLIENT_ID`
 - `ENTRA_CLIENT_SECRET`
 - `SYNC_INTERVAL` (e.g. `15m`; `0` disables automatic sync)
+- `AUTO_SYNC_ON_START` (`true`/`false`) — if set, forces the persisted auto-sync flag to this value at every container start, overriding the UI toggle. Leave unset to let the UI toggle decide.
 - `DEFAULT_USER_ROLE` (`Viewer`, `Editor`, `Admin`)
 - `ALLOW_CREATE_USERS` (`true`/`false`)
 - `ALLOW_REMOVE_TEAM_MEMBERS` (`true`/`false`)

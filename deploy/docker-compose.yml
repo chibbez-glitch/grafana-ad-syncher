@@ -8,7 +8,12 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       DATA_DIR: "/data"
-      SYNC_INTERVAL: "0"
+      # Tick interval for the auto-sync loop. Must be > 0 for AUTO_SYNC_ON_START
+      # to have any effect. Set to "0" to disable the loop entirely.
+      SYNC_INTERVAL: "15m"
+      # If set, forces the persisted auto-sync flag to this value on every
+      # container start (overrides whatever the UI toggle has stored).
+      AUTO_SYNC_ON_START: "true"
       DEFAULT_USER_ROLE: "Viewer"
       ALLOW_CREATE_USERS: "true"
       ALLOW_REMOVE_TEAM_MEMBERS: "true"

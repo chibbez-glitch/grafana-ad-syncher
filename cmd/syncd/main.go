@@ -32,6 +32,14 @@ func main() {
 	}
 	defer st.Close()
 
+	if cfg.AutoSyncOnStartSet {
+		if err := st.SetAutoSyncEnabled(cfg.AutoSyncOnStart); err != nil {
+			log.Printf("AUTO_SYNC_ON_START: failed to apply value=%t: %v", cfg.AutoSyncOnStart, err)
+		} else {
+			log.Printf("AUTO_SYNC_ON_START applied: auto_sync_enabled=%t", cfg.AutoSyncOnStart)
+		}
+	}
+
 	grafanaClient := grafana.New(cfg.GrafanaURL, cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword, cfg.GrafanaAdminToken, cfg.GrafanaInsecureTLS, cfg.GrafanaDebug)
 	entraClient := entra.New(cfg.EntraTenantID, cfg.EntraClientID, cfg.EntraClientSecret, cfg.EntraAuthorityBaseURL, cfg.GraphAPIBaseURL)
 
