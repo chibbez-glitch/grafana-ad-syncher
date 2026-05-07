@@ -13,9 +13,11 @@ services:
       ALLOW_CREATE_USERS: "true"
       ALLOW_REMOVE_TEAM_MEMBERS: "true"
       # Talk to the grafana container directly inside the shared docker network.
-      # No TLS, no external DNS, no extra_hosts needed.
-      GRAFANA_URL: "http://grafana:3000"
-      GRAFANA_INSECURE_TLS: "false"
+      # The grafana container listens on https/443 (TLS terminated inside grafana
+      # itself); its certificate is for grafana-prd.advanzia.com, so we must
+      # skip TLS verification when using the container alias `grafana`.
+      GRAFANA_URL: "https://grafana:443"
+      GRAFANA_INSECURE_TLS: "true"
       # Verbose connection logging (DNS / TCP / TLS / TTFB per request,
       # /etc/hosts dump + reachability probe at startup). Set to "false" once
       # things are stable.
