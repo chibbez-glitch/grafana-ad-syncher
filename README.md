@@ -17,25 +17,32 @@ This service syncs Entra ID group memberships into Grafana teams, assigns org ro
   - `Group.Read.All`
 
 ## Configuration
-Set these env vars in the container:
+All settings are baked into [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
+Edit the file in the git repo, commit, push, then redeploy. The two
+`REPLACE_ME_*` placeholders (Grafana admin password and Entra client secret)
+must be replaced before the first deploy — `deploy.sh` aborts otherwise.
 
-- `GRAFANA_URL` (e.g. `http://grafana:3000`)
+Recognised env vars (set on the `grafana-sync` container in the compose file):
+
+- `GRAFANA_URL` (default `http://grafana:3000` — talks to the grafana container in the shared docker network)
+- `GRAFANA_INSECURE_TLS` (`true` to skip TLS verification — only relevant if `GRAFANA_URL` is HTTPS)
+- `GRAFANA_DEBUG` (`true` enables DNS/TCP/TLS/TTFB logging per request, plus startup `/etc/hosts` dump and reachability probe)
 - `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD` (server admin)
 - `GRAFANA_ADMIN_TOKEN` (optional; if set it is preferred)
 - `ENTRA_TENANT_ID`
 - `ENTRA_CLIENT_ID`
 - `ENTRA_CLIENT_SECRET`
-- `SYNC_INTERVAL` (e.g. `15m`)
+- `SYNC_INTERVAL` (e.g. `15m`; `0` disables automatic sync)
 - `DEFAULT_USER_ROLE` (`Viewer`, `Editor`, `Admin`)
 - `ALLOW_CREATE_USERS` (`true`/`false`)
 - `ALLOW_REMOVE_TEAM_MEMBERS` (`true`/`false`)
 - `DATA_DIR` (default `/data`)
 - `LISTEN_ADDR` (default `:8080`)
-- `SYNC_INTERVAL` set to `0` to disable automatic sync
 
 ## Usage
-1. Build and run the container (example compose: `deploy/docker-compose.example.yml`).
-2. Open the UI at `http://<host>:8085` (or the port you mapped).
+1. Run `bash deploy.sh` on the target host. It wipes `/docker/grafana-ad-syncher`,
+   re-clones the repo and runs `docker compose up -d --build`.
+2. Open the UI at `http://<host>:8080`.
 3. Create a Grafana Org entry using the **Grafana Org ID** from Grafana.
 4. Add mappings of Entra Group IDs to Grafana Team names.
 5. Click **Preview sync** to review planned actions, then **Apply plan**.

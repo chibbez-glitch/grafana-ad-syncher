@@ -12,24 +12,31 @@ services:
       DEFAULT_USER_ROLE: "Viewer"
       ALLOW_CREATE_USERS: "true"
       ALLOW_REMOVE_TEAM_MEMBERS: "true"
+      # Talk to the grafana container directly inside the shared docker network.
+      # No TLS, no external DNS, no extra_hosts needed.
       GRAFANA_URL: "http://grafana:3000"
       GRAFANA_INSECURE_TLS: "false"
-      GRAFANA_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
-      GRAFANA_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
-      GRAFANA_ADMIN_TOKEN: "${GRAFANA_ADMIN_TOKEN}"
-      ENTRA_TENANT_ID: "${ENTRA_TENANT_ID}"
-      ENTRA_CLIENT_ID: "${ENTRA_CLIENT_ID}"
-      ENTRA_CLIENT_SECRET: "${ENTRA_CLIENT_SECRET}"
+      # Verbose connection logging (DNS / TCP / TLS / TTFB per request,
+      # /etc/hosts dump + reachability probe at startup). Set to "false" once
+      # things are stable.
+      GRAFANA_DEBUG: "true"
+      GRAFANA_ADMIN_USER: "entra-grf-syncher"
+      GRAFANA_ADMIN_PASSWORD: ""
+      # Service Account Token (glsa_*) — sent as `Authorization: Bearer <token>`.
+      GRAFANA_ADMIN_TOKEN: "glsa_NzqMRi5AvTW0s11NEk3uSnDnce5iqJJ8_12879e8e"
+      ENTRA_TENANT_ID: "37856388-34bb-4619-92fe-1d716cea96e9"
+      ENTRA_CLIENT_ID: "4f360933-a489-4cd0-bf5e-9e569730ddb6"
+      ENTRA_CLIENT_SECRET: "vVM8Q~8IElqoYOLRLGITY16GhOie7CCSB6-Oray9"
     ports:
       - "8080:8080"
     volumes:
       - grafana-sync-data:/data
     networks:
-      - grafana_app_network
+      - grafana_app-network
 
 volumes:
   grafana-sync-data:
 
 networks:
-  grafana_app_network:
+  grafana_app-network:
     external: true

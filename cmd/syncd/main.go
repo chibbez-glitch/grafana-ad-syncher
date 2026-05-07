@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,8 +32,18 @@ func main() {
 	}
 	defer st.Close()
 
-	grafanaClient := grafana.New(cfg.GrafanaURL, cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword, cfg.GrafanaAdminToken, cfg.GrafanaInsecureTLS)
+	grafanaClient := grafana.New(cfg.GrafanaURL, cfg.GrafanaAdminUser, cfg.GrafanaAdminPassword, cfg.GrafanaAdminToken, cfg.GrafanaInsecureTLS, cfg.GrafanaDebug)
 	entraClient := entra.New(cfg.EntraTenantID, cfg.EntraClientID, cfg.EntraClientSecret, cfg.EntraAuthorityBaseURL, cfg.GraphAPIBaseURL)
+
+	if cfg.GrafanaDebug {
+		log.Printf("grafana debug logging enabled (GRAFANA_DEBUG=true)")
+		log.Printf("grafana config: url=%s insecureTLS=%t admin_user_set=%t admin_token_set=%t",
+			cfg.GrafanaURL, cfg.GrafanaInsecureTLS, cfg.GrafanaAdminUser != "", cfg.GrafanaAdminToken != "")
+		logEtcHosts()
+		probeCtx, probeCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		grafanaClient.LogProbe(grafanaClient.Probe(probeCtx))
+		probeCancel()
+	}
 	clientSyncer := syncer.New(st, grafanaClient, entraClient, cfg.DefaultUserRole, cfg.AllowCreateUsers, cfg.AllowRemoveMembers)
 
 	if cfg.SyncInterval > 0 {
@@ -80,5 +92,33 @@ func main() {
 	log.Printf("sync service listening on %s", cfg.ListenAddr)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("http: %v", err)
+	}
+}
+
+// logEtcHosts prints the contents of /etc/hosts so we can verify whether the
+// docker `extra_hosts` entries are actually visible inside the container.
+// Lines starting with `#` and blank lines are skipped to keep the log compact.
+func logEtcHosts() {
+	f, err := os.Open("/etc/hosts")
+	if err != nil {
+		log.Printf("grafana probe: /etc/hosts unreadable: %v", err)
+		return
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	count := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		log.Printf("grafana probe: /etc/hosts %s", line)
+		count++
+	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("grafana probe: /etc/hosts read error: %v", err)
+	}
+	if count == 0 {
+		log.Printf("grafana probe: /etc/hosts contained no non-comment entries")
 	}
 }
