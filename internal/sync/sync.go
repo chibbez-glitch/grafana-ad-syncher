@@ -26,6 +26,78 @@ type Syncer struct {
 	mu          sync.Mutex
 	lastRun     time.Time
 	lastMessage string
+	planIssues  []Issue
+	applyIssues []Issue
+}
+
+// Issue is a problem hit during a sync that does not abort the run: a user that
+// could not be resolved, a group that could not be read, an action that was
+// skipped. These used to only reach the log, where nobody saw them, so the UI
+// showed an empty plan and no explanation.
+type Issue struct {
+	At       time.Time
+	Phase    string // "plan" or "apply"
+	Severity string // "error" or "warning"
+	Scope    string // team or mapping the issue belongs to
+	Email    string
+	Message  string
+}
+
+const (
+	PhasePlan  = "plan"
+	PhaseApply = "apply"
+
+	SeverityError   = "error"
+	SeverityWarning = "warning"
+)
+
+// Issues returns the problems recorded by the most recent plan and apply,
+// newest phase first.
+func (s *Syncer) Issues() []Issue {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Issue, 0, len(s.applyIssues)+len(s.planIssues))
+	out = append(out, s.applyIssues...)
+	out = append(out, s.planIssues...)
+	return out
+}
+
+func (s *Syncer) resetIssues(phase string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if phase == PhaseApply {
+		s.applyIssues = nil
+		return
+	}
+	s.planIssues = nil
+	s.applyIssues = nil
+}
+
+func (s *Syncer) addIssue(phase, severity, scope, email, format string, args ...any) {
+	issue := Issue{
+		At:       time.Now().UTC(),
+		Phase:    phase,
+		Severity: severity,
+		Scope:    scope,
+		Email:    email,
+		Message:  fmt.Sprintf(format, args...),
+	}
+	log.Printf("sync: %s %s: %s (%s%s)", phase, severity, issue.Message, scope, emailSuffix(email))
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if phase == PhaseApply {
+		s.applyIssues = append(s.applyIssues, issue)
+		return
+	}
+	s.planIssues = append(s.planIssues, issue)
+}
+
+func emailSuffix(email string) string {
+	if email == "" {
+		return ""
+	}
+	return " / " + email
 }
 
 type Action struct {
@@ -89,9 +161,19 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 	if len(actions) == 0 {
 		return nil
 	}
+	s.resetIssues(PhaseApply)
 	sortActions(actions)
 	userIDs := map[string]int64{}
 	teamIDs := map[string]int64{}
+	failed := 0
+
+	// fail records a failed action and carries on. Aborting on the first error
+	// used to swallow every later action, and since create_user sorts ahead of
+	// add_user_to_team, one uncreatable user emptied the whole run.
+	fail := func(action store.PlanAction, format string, args ...any) {
+		failed++
+		s.addIssue(PhaseApply, SeverityError, actionScope(action), action.Email, format, args...)
+	}
 
 	for _, action := range actions {
 		email := action.Email
@@ -99,15 +181,15 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 		case "create_team":
 			teamID, err := s.grafana.EnsureTeam(action.GrafanaOrgID, action.TeamName)
 			if err != nil {
-				return err
+				fail(action, "create team %q failed: %v", action.TeamName, err)
+				continue
 			}
 			teamIDs[teamKey(action.OrgID, action.TeamName)] = teamID
 			if err := s.store.UpdateMappingTeamIDForName(action.OrgID, action.TeamName, teamID); err != nil {
-				log.Printf("sync: update team id for %s failed: %v", action.TeamName, err)
+				s.addIssue(PhaseApply, SeverityWarning, actionScope(action), "",
+					"team %q created but storing its id failed: %v", action.TeamName, err)
 			}
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.recordAction(action)
 		case "create_user":
 			name := action.DisplayName
 			if name == "" {
@@ -115,134 +197,172 @@ func (s *Syncer) ApplyPlan(actions []store.PlanAction) error {
 			}
 			created, err := s.grafana.CreateUser(email, email, name, randomPassword())
 			if err != nil {
-				return err
+				fail(action, "create user failed: %v%s", err, createUserHint(err))
+				continue
 			}
 			userIDs[email] = created.ID
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.grafana.InvalidateOrgUsers(action.GrafanaOrgID)
+			s.recordAction(action)
 		case "add_user_to_org":
 			if err := s.grafana.AddUserToOrg(action.GrafanaOrgID, email, action.Role); err != nil {
-				return err
+				fail(action, "add user to org %d as %s failed: %v", action.GrafanaOrgID, action.Role, err)
+				continue
 			}
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.grafana.InvalidateOrgUsers(action.GrafanaOrgID)
+			s.recordAction(action)
 		case "update_user_role":
-			id := action.UserID
-			if id == 0 {
-				id = userIDs[email]
+			id, err := s.resolveActionUser(action, userIDs)
+			if err != nil {
+				fail(action, "Grafana user lookup failed: %v", err)
+				continue
 			}
 			if id == 0 {
-				user, found, err := s.grafana.LookupUser(email)
-				if err != nil {
-					return err
-				}
-				if found {
-					id = user.ID
-				}
+				s.addIssue(PhaseApply, SeverityWarning, actionScope(action), email,
+					"org role not updated: no Grafana user found")
+				continue
 			}
-			if id != 0 {
-				if err := s.grafana.UpdateUserRole(action.GrafanaOrgID, id, action.Role); err != nil {
-					if isExternallySyncedUserErr(err) {
-						log.Printf("sync: skip update role for externally synced user %s: %v", email, err)
-						continue
-					}
-					return err
+			if err := s.grafana.UpdateUserRole(action.GrafanaOrgID, id, action.Role); err != nil {
+				if isExternallySyncedUserErr(err) {
+					s.addIssue(PhaseApply, SeverityWarning, actionScope(action), email,
+						"org role not changed: Grafana manages this user externally")
+					continue
 				}
+				fail(action, "update org role to %s failed: %v", action.Role, err)
+				continue
 			}
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.recordAction(action)
 		case "add_user_to_team":
-			teamID := action.TeamID
+			teamID := resolveActionTeam(action, teamIDs)
 			if teamID == 0 {
-				teamID = teamIDs[teamKey(action.OrgID, action.TeamName)]
+				fail(action, "no Grafana team id known for %q", action.TeamName)
+				continue
 			}
-			if teamID == 0 {
-				return fmt.Errorf("missing team id for %s", action.TeamName)
+			id, err := s.resolveActionUser(action, userIDs)
+			if err != nil {
+				fail(action, "Grafana user lookup failed: %v", err)
+				continue
 			}
-			id := action.UserID
 			if id == 0 {
-				id = userIDs[email]
+				s.addIssue(PhaseApply, SeverityWarning, actionScope(action), email,
+					"not added to team %q: no Grafana user found in org %d", action.TeamName, action.GrafanaOrgID)
+				continue
 			}
-			if id == 0 {
-				user, found, err := s.grafana.LookupUser(email)
-				if err != nil {
-					return err
-				}
-				if found {
-					id = user.ID
-				}
+			if err := s.grafana.AddUserToTeam(teamID, id, action.TeamRole); err != nil {
+				fail(action, "add to team %q failed: %v", action.TeamName, err)
+				continue
 			}
-			if id != 0 {
-				if err := s.grafana.AddUserToTeam(teamID, id, action.TeamRole); err != nil {
-					return err
-				}
-			}
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.recordAction(action)
 		case "update_team_role":
-			teamID := action.TeamID
+			teamID := resolveActionTeam(action, teamIDs)
 			if teamID == 0 {
-				teamID = teamIDs[teamKey(action.OrgID, action.TeamName)]
+				fail(action, "no Grafana team id known for %q", action.TeamName)
+				continue
 			}
-			if teamID == 0 {
-				return fmt.Errorf("missing team id for %s", action.TeamName)
+			id, err := s.resolveActionUser(action, userIDs)
+			if err != nil {
+				fail(action, "Grafana user lookup failed: %v", err)
+				continue
 			}
-			id := action.UserID
 			if id == 0 {
-				user, found, err := s.grafana.LookupUser(email)
-				if err != nil {
-					return err
-				}
-				if found {
-					id = user.ID
-				}
+				s.addIssue(PhaseApply, SeverityWarning, actionScope(action), email,
+					"team role not updated: no Grafana user found")
+				continue
 			}
-			if id != 0 {
-				if err := s.grafana.UpdateTeamMemberRole(teamID, id, action.TeamRole); err != nil {
-					return err
-				}
+			if err := s.grafana.UpdateTeamMemberRole(teamID, id, action.TeamRole); err != nil {
+				fail(action, "update team role in %q failed: %v", action.TeamName, err)
+				continue
 			}
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.recordAction(action)
 		case "remove_user_from_team":
-			teamID := action.TeamID
+			teamID := resolveActionTeam(action, teamIDs)
 			if teamID == 0 {
-				teamID = teamIDs[teamKey(action.OrgID, action.TeamName)]
+				fail(action, "no Grafana team id known for %q", action.TeamName)
+				continue
 			}
-			if teamID == 0 {
-				return fmt.Errorf("missing team id for %s", action.TeamName)
+			id, err := s.resolveActionUser(action, userIDs)
+			if err != nil {
+				fail(action, "Grafana user lookup failed: %v", err)
+				continue
 			}
-			id := action.UserID
 			if id == 0 {
-				user, found, err := s.grafana.LookupUser(email)
-				if err != nil {
-					return err
-				}
-				if found {
-					id = user.ID
-				}
+				s.addIssue(PhaseApply, SeverityWarning, actionScope(action), email,
+					"not removed from team %q: no Grafana user found", action.TeamName)
+				continue
 			}
-			if id != 0 {
-				if err := s.grafana.RemoveUserFromTeam(teamID, id); err != nil {
-					return err
-				}
+			if err := s.grafana.RemoveUserFromTeam(teamID, id); err != nil {
+				fail(action, "remove from team %q failed: %v", action.TeamName, err)
+				continue
 			}
-			if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
-				log.Printf("sync: record action failed: %v", err)
-			}
+			s.recordAction(action)
 		default:
 			continue
 		}
 	}
+
+	if failed > 0 {
+		return fmt.Errorf("%d of %d actions failed, see sync issues", failed, len(actions))
+	}
 	return nil
 }
 
+func (s *Syncer) recordAction(action store.PlanAction) {
+	if err := s.store.RecordSyncAction(action, time.Now()); err != nil {
+		log.Printf("sync: record action failed: %v", err)
+	}
+}
+
+func resolveActionTeam(action store.PlanAction, teamIDs map[string]int64) int64 {
+	if action.TeamID != 0 {
+		return action.TeamID
+	}
+	return teamIDs[teamKey(action.OrgID, action.TeamName)]
+}
+
+// resolveActionUser resolves an action's Grafana user id: the id the plan
+// already carries, then one created earlier in this apply, then an org-scoped
+// lookup.
+func (s *Syncer) resolveActionUser(action store.PlanAction, userIDs map[string]int64) (int64, error) {
+	if action.UserID != 0 {
+		return action.UserID, nil
+	}
+	if id := userIDs[action.Email]; id != 0 {
+		return id, nil
+	}
+	user, found, err := s.grafana.LookupUserInOrg(action.GrafanaOrgID, action.Email)
+	if err != nil {
+		return 0, err
+	}
+	if !found {
+		return 0, nil
+	}
+	return user.ID, nil
+}
+
+// createUserHint explains the status Grafana returns for POST /api/admin/users
+// when the caller is not a server admin — a service account token never is, and
+// the bare 403/404 gives no clue why.
+func createUserHint(err error) string {
+	switch grafana.StatusOf(err) {
+	case 401, 403, 404:
+		return " — POST /api/admin/users requires Grafana server admin, which a service account token cannot hold." +
+			" Either set ALLOW_CREATE_USERS=false and pre-create the user, or authenticate with admin credentials."
+	default:
+		return ""
+	}
+}
+
+func actionScope(action store.PlanAction) string {
+	if strings.TrimSpace(action.TeamName) != "" {
+		return action.TeamName
+	}
+	return fmt.Sprintf("org %d", action.GrafanaOrgID)
+}
+
 func (s *Syncer) BuildPlan() (*store.Plan, error) {
+	s.resetIssues(PhasePlan)
+	// Plan against a fresh view of Grafana rather than a previous run's snapshot.
+	s.grafana.ResetUserCache()
+
 	orgs, err := s.store.ListOrgs()
 	if err != nil {
 		return nil, fmt.Errorf("list orgs: %w", err)
@@ -270,7 +390,8 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 	for _, mapping := range mappings {
 		org, ok := orgByID[mapping.OrgID]
 		if !ok {
-			log.Printf("sync: mapping %d references missing org %d", mapping.ID, mapping.OrgID)
+			s.addIssue(PhasePlan, SeverityError, fmt.Sprintf("mapping %d", mapping.ID), "",
+				"mapping references org %d, which does not exist", mapping.OrgID)
 			continue
 		}
 
@@ -278,7 +399,8 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 		if teamID == 0 {
 			id, found, err := s.grafana.SearchTeam(org.GrafanaOrgID, mapping.GrafanaTeamName)
 			if err != nil {
-				log.Printf("sync: search team %q failed: %v", mapping.GrafanaTeamName, err)
+				s.addIssue(PhasePlan, SeverityWarning, mappingNote(orgNameByID[org.ID], mapping), "",
+					"Grafana team search failed: %v", err)
 			} else if found {
 				teamID = id
 			}
@@ -295,9 +417,12 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			})
 		}
 
+		scope := mappingNote(orgNameByID[org.ID], mapping)
+
 		members, err := s.entra.ListGroupMembers(mapping.ExternalGroupID)
 		if err != nil {
-			log.Printf("sync: list group members %s failed: %v", mapping.ExternalGroupID, err)
+			s.addIssue(PhasePlan, SeverityError, scope, "",
+				"Entra group members could not be read, mapping skipped: %v", err)
 			continue
 		}
 
@@ -305,6 +430,8 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 		for _, member := range members {
 			email := strings.TrimSpace(strings.ToLower(pickEmail(member)))
 			if email == "" {
+				s.addIssue(PhasePlan, SeverityWarning, scope, member.UPN,
+					"Entra member %q has neither mail nor userPrincipalName, skipped", member.DisplayName)
 				continue
 			}
 			want[email] = member
@@ -316,17 +443,26 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			teamRoleByTeamEmail[key][email] = maxTeamRole(current, normalizeTeamRole(mapping.TeamRole))
 		}
 
+		// Index existing team members by both email and login: Grafana may hold
+		// the UPN where Entra holds the mail, and a single key would then make an
+		// existing member look absent — planning an add and a remove for one and
+		// the same person.
 		have := make(map[string]grafana.TeamMember)
+		haveByID := make(map[int64]grafana.TeamMember)
 		if teamID != 0 {
 			teamMembers, err := s.grafana.ListTeamMembers(teamID)
 			if err != nil {
-				log.Printf("sync: list team members %d failed: %v", teamID, err)
+				s.addIssue(PhasePlan, SeverityError, scope, "",
+					"Grafana team members could not be read, mapping skipped: %v", err)
 				continue
 			}
 			for _, tm := range teamMembers {
-				email := strings.TrimSpace(strings.ToLower(tm.Email))
-				if email != "" {
-					have[email] = tm
+				haveByID[tm.ID] = tm
+				for _, key := range []string{tm.Email, tm.Login} {
+					key = strings.TrimSpace(strings.ToLower(key))
+					if key != "" {
+						have[key] = tm
+					}
 				}
 			}
 		}
@@ -348,9 +484,10 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 		for email, member := range want {
 			user, ok := userCache[email]
 			if !ok {
-				foundUser, found, err := s.grafana.LookupUser(email)
+				foundUser, found, err := s.resolveMember(org.GrafanaOrgID, member)
 				if err != nil {
-					log.Printf("sync: lookup user %s failed: %v", email, err)
+					s.addIssue(PhasePlan, SeverityError, scope, email,
+						"Grafana user lookup failed, user skipped: %v", err)
 					continue
 				}
 				if found {
@@ -360,6 +497,8 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			}
 
 			if user == nil {
+				s.addIssue(PhasePlan, SeverityWarning, scope, email,
+					"no Grafana user matches mail %q or UPN %q in org %d", member.Mail, member.UPN, org.GrafanaOrgID)
 				if !s.allowCreateUsers {
 					actions = append(actions, store.PlanAction{
 						ActionType:    "blocked_create_user",
@@ -406,7 +545,7 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 				roleSourceByOrgEmail[org.ID][email] = fmt.Sprintf("%s; %s", roleSource, mappingNote(orgNameByID[org.ID], mapping))
 			}
 
-			if _, inTeam := have[email]; !inTeam {
+			if _, inTeam := teamMemberFor(have, member); !inTeam {
 				key := teamKey(org.ID, mapping.GrafanaTeamName)
 				teamUserKey := key + ":" + email
 				teamRole := teamRoleByTeamEmail[key][email]
@@ -457,9 +596,22 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 		}
 
 	if s.allowRemoveUsers {
-			for email, user := range have {
-				if _, ok := want[email]; ok {
+			// Resolve who is wanted by user id first. Comparing e-mail keys alone
+			// would mark a member for removal whose Grafana account is known under
+			// its UPN while Entra lists its mail.
+			wantedIDs := make(map[int64]struct{}, len(want))
+			for _, member := range want {
+				if tm, ok := teamMemberFor(have, member); ok {
+					wantedIDs[tm.ID] = struct{}{}
+				}
+			}
+			for _, user := range haveByID {
+				if _, ok := wantedIDs[user.ID]; ok {
 					continue
+				}
+				email := strings.TrimSpace(strings.ToLower(user.Email))
+				if email == "" {
+					email = strings.TrimSpace(strings.ToLower(user.Login))
 				}
 				actions = append(actions, store.PlanAction{
 					ActionType:    "remove_user_from_team",
@@ -480,7 +632,8 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 	for _, org := range orgs {
 		users, err := s.grafana.ListOrgUsers(org.GrafanaOrgID)
 		if err != nil {
-			log.Printf("sync: list org users %d failed: %v", org.GrafanaOrgID, err)
+			s.addIssue(PhasePlan, SeverityError, org.Name, "",
+				"Grafana org users could not be read, org roles not planned: %v", err)
 			continue
 		}
 		if orgUsersByOrgEmail[org.ID] == nil {
@@ -564,8 +717,59 @@ func (s *Syncer) finish(start time.Time, err error) error {
 	return err
 }
 
+// resolveMember maps an Entra member onto a Grafana user, trying the mail first
+// and then the UPN. The two routinely differ in Entra (Abdelmomen.Bouzarkouna@
+// vs abouzarkouna@), and Grafana stores whichever one the login provider sent.
+func (s *Syncer) resolveMember(grafanaOrgID int64, member entra.Member) (*grafana.User, bool, error) {
+	for _, candidate := range loginCandidates(member) {
+		user, found, err := s.grafana.LookupUserInOrg(grafanaOrgID, candidate)
+		if err != nil {
+			return nil, false, err
+		}
+		if found {
+			return user, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+// teamMemberFor finds an Entra member among a team's current members, matching
+// on mail and UPN against both the Grafana email and login.
+func teamMemberFor(have map[string]grafana.TeamMember, member entra.Member) (grafana.TeamMember, bool) {
+	for _, candidate := range loginCandidates(member) {
+		if tm, ok := have[candidate]; ok {
+			return tm, true
+		}
+	}
+	return grafana.TeamMember{}, false
+}
+
+// loginCandidates returns the identifiers to try against Grafana, mail first,
+// lower-cased and de-duplicated.
+func loginCandidates(member entra.Member) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	for _, value := range []string{member.Mail, member.UPN} {
+		value = strings.TrimSpace(strings.ToLower(value))
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
+// pickEmail is the member's identity for planning and display. Entra leaves mail
+// empty on plenty of accounts, so fall back to the UPN rather than dropping them.
 func pickEmail(member entra.Member) string {
-	return member.Mail
+	if mail := strings.TrimSpace(member.Mail); mail != "" {
+		return mail
+	}
+	return strings.TrimSpace(member.UPN)
 }
 
 func randomPassword() string {

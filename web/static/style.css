@@ -432,6 +432,32 @@ tr.muted td {
   background: rgba(120, 120, 120, 0.06);
 }
 
+.issue-count {
+  margin-left: 10px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--stroke);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.issue-hint {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.issue-message {
+  white-space: normal;
+  word-break: break-word;
+  max-width: 720px;
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: 0.8rem;
+}
+
 footer {
   padding: 24px 40px 40px;
   color: var(--muted);

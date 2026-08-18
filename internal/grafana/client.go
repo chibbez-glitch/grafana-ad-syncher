@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -27,6 +28,48 @@ type Client struct {
 	debug         bool
 	mu            sync.Mutex
 	lastOK        time.Time
+
+	// userMu guards the org-scoped user index that backs LookupUserInOrg.
+	userMu       sync.Mutex
+	orgUsers     map[int64]map[string]User
+	lookupDenied bool
+}
+
+// APIError carries the HTTP status of a failed Grafana call so callers can tell
+// "not found" apart from "not permitted" — Grafana answers both with a body,
+// but only the status distinguishes a missing user from a missing permission.
+type APIError struct {
+	Method string
+	URL    string
+	Status int
+	Body   string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("grafana: %s %s -> %d: %s", e.Method, e.URL, e.Status, e.Body)
+}
+
+// StatusOf returns the HTTP status behind err, or 0 if err is not an APIError.
+func StatusOf(err error) int {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status
+	}
+	return 0
+}
+
+// IsPermissionDenied reports whether err is Grafana refusing the call for lack
+// of rights. Only 401/403 count: /api/users/lookup answers 404 for a genuinely
+// unknown user, so treating 404 as "denied" would hide real misses. Server-admin
+// endpoints such as /api/admin/users answer 404 to a service account token too,
+// which is why those are handled at the call site instead.
+func IsPermissionDenied(err error) bool {
+	switch StatusOf(err) {
+	case http.StatusForbidden, http.StatusUnauthorized:
+		return true
+	default:
+		return false
+	}
 }
 
 type User struct {
@@ -86,6 +129,7 @@ func New(baseURL, adminUser, adminPassword, adminToken string, insecureTLS, debu
 		adminToken:    adminToken,
 		httpClient:    &http.Client{Timeout: 30 * time.Second, Transport: transport},
 		debug:         debug,
+		orgUsers:      map[int64]map[string]User{},
 	}
 }
 
@@ -266,6 +310,103 @@ func (c *Client) LookupUser(loginOrEmail string) (*User, bool, error) {
 		return nil, false, err
 	}
 	return &user, true, nil
+}
+
+// LookupUserInOrg resolves a Grafana user by login or email within one org.
+//
+// It prefers /api/users/lookup, but that endpoint is server-admin scoped: a
+// service account token is refused with 403 "Permissions needed: users:read".
+// Once that happens we stop calling it for the rest of the process lifetime and
+// resolve against the member list of /api/orgs/{orgID}/users instead, which an
+// org-scoped token may read. Users outside the org are not resolvable that way —
+// but they could not be added to one of its teams anyway.
+func (c *Client) LookupUserInOrg(orgID int64, loginOrEmail string) (*User, bool, error) {
+	key := strings.ToLower(strings.TrimSpace(loginOrEmail))
+	if key == "" {
+		return nil, false, nil
+	}
+
+	if !c.lookupIsDenied() {
+		user, found, err := c.LookupUser(loginOrEmail)
+		if err == nil {
+			return user, found, nil
+		}
+		if !IsPermissionDenied(err) {
+			return nil, false, err
+		}
+		c.denyLookup()
+		log.Printf("grafana: /api/users/lookup denied (%v); resolving users from the org member list instead", err)
+	}
+
+	index, err := c.orgUserIndex(orgID)
+	if err != nil {
+		return nil, false, err
+	}
+	if user, ok := index[key]; ok {
+		return &user, true, nil
+	}
+	return nil, false, nil
+}
+
+// InvalidateOrgUsers drops the cached member index for one org. Call it after
+// changing that org's membership so a later lookup sees the new user.
+func (c *Client) InvalidateOrgUsers(orgID int64) {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	delete(c.orgUsers, orgID)
+}
+
+// ResetUserCache drops every cached org member index. Call it at the start of a
+// sync run so one run never plans against another run's snapshot.
+func (c *Client) ResetUserCache() {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	c.orgUsers = map[int64]map[string]User{}
+}
+
+// orgUserIndex returns the org's members keyed by lower-cased email and login.
+func (c *Client) orgUserIndex(orgID int64) (map[string]User, error) {
+	c.userMu.Lock()
+	if index, ok := c.orgUsers[orgID]; ok {
+		c.userMu.Unlock()
+		return index, nil
+	}
+	c.userMu.Unlock()
+
+	users, err := c.ListOrgUsers(orgID)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[string]User, len(users)*2)
+	for _, user := range users {
+		if user.ID == 0 {
+			continue
+		}
+		entry := User{ID: user.ID, Name: user.Name, Login: user.Login, Email: user.Email}
+		for _, key := range []string{user.Email, user.Login} {
+			key = strings.ToLower(strings.TrimSpace(key))
+			if key != "" {
+				index[key] = entry
+			}
+		}
+	}
+
+	c.userMu.Lock()
+	c.orgUsers[orgID] = index
+	c.userMu.Unlock()
+	return index, nil
+}
+
+func (c *Client) lookupIsDenied() bool {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	return c.lookupDenied
+}
+
+func (c *Client) denyLookup() {
+	c.userMu.Lock()
+	defer c.userMu.Unlock()
+	c.lookupDenied = true
 }
 
 func (c *Client) CreateUser(email, login, name, password string) (*User, error) {
@@ -517,7 +658,12 @@ func (c *Client) doJSONWithHeaders(method, endpoint string, headers map[string]s
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		payload, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, fmt.Errorf("grafana: %s %s -> %d: %s", method, endpoint, resp.StatusCode, strings.TrimSpace(string(payload)))
+		return resp.StatusCode, &APIError{
+			Method: method,
+			URL:    endpoint,
+			Status: resp.StatusCode,
+			Body:   strings.TrimSpace(string(payload)),
+		}
 	}
 
 	c.mu.Lock()

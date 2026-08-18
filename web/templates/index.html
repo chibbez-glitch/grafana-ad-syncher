@@ -249,6 +249,43 @@
   })();
 </script>
 
+{{if .SyncIssues}}
+<section class="card">
+  <h2>
+    Sync Issues
+    <span class="issue-count">{{.SyncErrorCount}} errors &middot; {{.SyncWarnCount}} warnings</span>
+  </h2>
+  <p class="issue-hint">
+    Problems from the last plan/apply. <strong>Warning</strong> means something was skipped
+    (and will not appear in the plan at all); <strong>error</strong> means an action was attempted and failed.
+  </p>
+  <table>
+    <thead>
+      <tr>
+        <th>Severity</th>
+        <th>Phase</th>
+        <th>Scope</th>
+        <th>User</th>
+        <th>Detail</th>
+        <th>Time (UTC)</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .SyncIssues}}
+      <tr class="{{.Class}}">
+        <td>{{.Severity}}</td>
+        <td>{{.Phase}}</td>
+        <td>{{.Scope}}</td>
+        <td>{{.Email}}</td>
+        <td class="issue-message">{{.Message}}</td>
+        <td>{{.At}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+</section>
+{{end}}
+
 {{if .Plan}}
 <section class="card">
   <h2>Planned Actions (Grouped)</h2>

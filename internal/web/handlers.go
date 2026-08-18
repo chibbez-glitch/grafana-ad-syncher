@@ -95,12 +95,27 @@ type pageData struct {
 	FolderPerms      []folderPermGroup
 	FolderPermsErr   string
 	PlanGroups       []planTeamGroup
+	SyncIssues       []syncIssueView
+	SyncErrorCount   int
+	SyncWarnCount    int
 	LastRun          string
 	LastStatus       string
 	Plan             *store.Plan
 	AutoSyncEnabled  bool
 	CurrentPage      string
 	ContentTemplate  string
+}
+
+// syncIssueView is one problem from the last plan or apply, rendered in the
+// "Sync Issues" panel so failures stop being log-only.
+type syncIssueView struct {
+	At       string
+	Phase    string
+	Severity string
+	Scope    string
+	Email    string
+	Message  string
+	Class    string
 }
 
 type planActionView struct {
@@ -222,6 +237,7 @@ func (s *Server) buildPageData() (pageData, error) {
 	if plan != nil {
 		planGroups = buildPlanGroups(plan.Actions)
 	}
+	syncIssues, syncErrors, syncWarnings := buildSyncIssues(s.syncer.Issues())
 	lastRun, lastStatus := s.syncer.LastRun()
 	autoSyncEnabled := true
 	if enabled, err := s.store.AutoSyncEnabled(); err != nil {
@@ -243,11 +259,41 @@ func (s *Server) buildPageData() (pageData, error) {
 		FolderPerms:     folderPerms,
 		FolderPermsErr:  folderPermsErr,
 		PlanGroups:      planGroups,
+		SyncIssues:      syncIssues,
+		SyncErrorCount:  syncErrors,
+		SyncWarnCount:   syncWarnings,
 		LastRun:         formatTime(lastRun),
 		LastStatus:      lastStatus,
 		Plan:            plan,
 		AutoSyncEnabled: autoSyncEnabled,
 	}, nil
+}
+
+// buildSyncIssues renders the syncer's issues for the template and counts them
+// by severity so the panel header can lead with the number that matters.
+func buildSyncIssues(issues []syncer.Issue) ([]syncIssueView, int, int) {
+	views := make([]syncIssueView, 0, len(issues))
+	errorCount := 0
+	warnCount := 0
+	for _, issue := range issues {
+		class := "danger"
+		if issue.Severity == syncer.SeverityError {
+			errorCount++
+		} else {
+			warnCount++
+			class = "muted"
+		}
+		views = append(views, syncIssueView{
+			At:       formatTime(issue.At),
+			Phase:    issue.Phase,
+			Severity: issue.Severity,
+			Scope:    issue.Scope,
+			Email:    issue.Email,
+			Message:  issue.Message,
+			Class:    class,
+		})
+	}
+	return views, errorCount, warnCount
 }
 
 func (s *Server) refreshLoop(interval time.Duration) {
