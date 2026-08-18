@@ -8,15 +8,27 @@ services:
     environment:
       LISTEN_ADDR: ":8080"
       DATA_DIR: "/data"
-      # Tick interval for the auto-sync loop. Must be > 0 for AUTO_SYNC_ON_START
-      # to have any effect. Set to "0" to disable the loop entirely.
-      SYNC_INTERVAL: "15m"
-      # If set, forces the persisted auto-sync flag to this value on every
-      # container start (overrides whatever the UI toggle has stored).
-      AUTO_SYNC_ON_START: "true"
+      # Tick interval for the auto-sync loop. "0" means the loop goroutine is
+      # never started at all, so nothing can sync unattended — not even if the
+      # "Automatische Updates" toggle in the UI is switched back on.
+      #
+      # Held at "0" deliberately until a manual plan has been validated:
+      # unattended syncing every 15 minutes is what let a broken user lookup go
+      # unnoticed for months. Restore "15m" afterwards.
+      SYNC_INTERVAL: "0"
+      # Forces the persisted auto-sync flag to this value on every container
+      # start, overriding whatever the UI toggle has stored. Belt and braces
+      # alongside SYNC_INTERVAL=0: this clears the flag, that removes the loop.
+      #
+      # Note the loop runs once immediately on start, before waiting for the
+      # first tick — so a restart with the flag set syncs straight away.
+      AUTO_SYNC_ON_START: "false"
       DEFAULT_USER_ROLE: "Viewer"
       ALLOW_CREATE_USERS: "true"
-      ALLOW_REMOVE_TEAM_MEMBERS: "true"
+      # Kept off deliberately: removals are the only destructive action here, and
+      # they ran unchecked while additions were silently failing. Turn back on
+      # after verifying a plan.
+      ALLOW_REMOVE_TEAM_MEMBERS: "false"
       # Talk to the grafana container directly inside the shared docker network.
       # The grafana container listens on https/443 (TLS terminated inside grafana
       # itself); its certificate is for grafana-prd.advanzia.com, so we must
@@ -27,13 +39,19 @@ services:
       # /etc/hosts dump + reachability probe at startup). Set to "false" once
       # things are stable.
       GRAFANA_DEBUG: "true"
-      GRAFANA_ADMIN_USER: "entra-grf-syncher"
-      GRAFANA_ADMIN_PASSWORD: ""
-      # Service Account Token (glsa_*) — sent as `Authorization: Bearer <token>`.
-      GRAFANA_ADMIN_TOKEN: "glsa_NzqMRi5AvTW0s11NEk3uSnDnce5iqJJ8_12879e8e"
-      ENTRA_TENANT_ID: "37856388-34bb-4619-92fe-1d716cea96e9"
-      ENTRA_CLIENT_ID: "4f360933-a489-4cd0-bf5e-9e569730ddb6"
-      ENTRA_CLIENT_SECRET: "vVM8Q~8IElqoYOLRLGITY16GhOie7CCSB6-Oray9"
+      # Credentials come from deploy/.env, which deploy.sh installs from
+      # /etc/grafana-ad-syncher.env after cloning. See deploy/env.example.
+      #
+      # A non-empty GRAFANA_ADMIN_TOKEN always wins and the password is never
+      # sent. Creating and looking up users needs Grafana *server* admin, which a
+      # service account token cannot hold — so leave the token empty and use a
+      # local admin user if the syncer must create users.
+      GRAFANA_ADMIN_USER: "${GRAFANA_ADMIN_USER}"
+      GRAFANA_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+      GRAFANA_ADMIN_TOKEN: "${GRAFANA_ADMIN_TOKEN}"
+      ENTRA_TENANT_ID: "${ENTRA_TENANT_ID}"
+      ENTRA_CLIENT_ID: "${ENTRA_CLIENT_ID}"
+      ENTRA_CLIENT_SECRET: "${ENTRA_CLIENT_SECRET}"
     ports:
       - "8080:8080"
     volumes:
