@@ -14,6 +14,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	// Embeds the IANA tz database in the binary, so DISPLAY_TIMEZONE resolves on
+	// the bare alpine runtime image without installing the tzdata package.
+	_ "time/tzdata"
 
 	"grafana-ad-syncher/internal/config"
 	"grafana-ad-syncher/internal/dockerlog"
@@ -37,6 +40,14 @@ func main() {
 	// else logs, so the API can serve the whole startup sequence.
 	log.SetFlags(log.LstdFlags | log.LUTC)
 	logBuffer := logbuf.New(cfg.LogBufferLines).Install()
+
+	// UI timestamps only. The log stays UTC so it lines up with docker logs and
+	// with what Grafana and Graph return.
+	if err := web.SetDisplayLocation(cfg.DisplayTimezone); err != nil {
+		log.Printf("DISPLAY_TIMEZONE %q not resolvable, falling back to UTC: %v", cfg.DisplayTimezone, err)
+	} else {
+		log.Printf("ui timestamps rendered in %s (log stays UTC)", web.DisplayLocation())
+	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		log.Fatalf("data dir: %v", err)
@@ -75,6 +86,16 @@ func main() {
 	}
 	clientSyncer := syncer.New(st, grafanaClient, entraClient, cfg.DefaultUserRole, cfg.AllowCreateUsers, cfg.AllowRemoveMembers)
 
+	// Say out loud whether unattended syncing is possible at all. With
+	// SYNC_INTERVAL=0 the loop below is never started, so the "Automatische
+	// Updates" toggle in the UI sets a flag that nothing reads - which looks
+	// exactly like a working auto-sync that simply has not fired yet.
+	if cfg.SyncInterval > 0 {
+		log.Printf("auto sync loop: enabled, interval=%s (runs once immediately, then every tick; applies the whole plan without review)", cfg.SyncInterval)
+	} else {
+		log.Printf("auto sync loop: DISABLED because SYNC_INTERVAL=0 - the UI toggle has no effect until this is set to a duration such as 15m")
+	}
+
 	if cfg.SyncInterval > 0 {
 		go func() {
 			ticker := time.NewTicker(cfg.SyncInterval)
@@ -98,6 +119,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("templates: %v", err)
 	}
+	web.SetAutoSyncInterval(cfg.SyncInterval)
 	server.Register(mux)
 
 	// Troubleshooting endpoints, on the same mux and therefore the same port as

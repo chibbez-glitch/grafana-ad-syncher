@@ -42,6 +42,9 @@ type Config struct {
 	// DockerSocket is the daemon socket used by /api/logs/docker. It only works
 	// if it is bind-mounted into this container.
 	DockerSocket string
+	// DisplayTimezone is the IANA zone the UI renders timestamps in. Storage and
+	// logging stay UTC regardless.
+	DisplayTimezone string
 	// ContainerName is what /api/logs/docker reads when no ?container= is given.
 	ContainerName string
 }
@@ -69,6 +72,7 @@ func Load() Config {
 		LogBufferLines:        getEnvInt("LOG_BUFFER_LINES", 5000),
 		DockerSocket:          getEnv("DOCKER_SOCKET", "/var/run/docker.sock"),
 		ContainerName:         getEnv("CONTAINER_NAME", "grafana-sync"),
+		DisplayTimezone:       getEnv("DISPLAY_TIMEZONE", "Europe/Luxembourg"),
 	}
 	if raw, ok := os.LookupEnv("AUTO_SYNC_ON_START"); ok && strings.TrimSpace(raw) != "" {
 		if parsed, err := strconv.ParseBool(strings.TrimSpace(raw)); err == nil {

@@ -102,6 +102,9 @@ type pageData struct {
 	LastStatus       string
 	Plan             *store.Plan
 	AutoSyncEnabled  bool
+	PlanCreatedAt    string
+	AutoSyncPossible bool
+	SyncIntervalText string
 	CurrentPage      string
 	ContentTemplate  string
 }
@@ -234,8 +237,12 @@ func (s *Server) buildPageData() (pageData, error) {
 	}
 	grafanaTeams, grafanaTeamsErr, grafanaUsers, grafanaUsersErr, entraGroups, entraGroupsErr, entraUsers, entraUsersErr, folderPerms, folderPermsErr := s.getExternalData(orgs, mappings)
 	var planGroups []planTeamGroup
+	var planCreatedAt string
 	if plan != nil {
 		planGroups = buildPlanGroups(plan.Actions)
+		// The store keeps CreatedAt as an RFC3339 string, so it needs converting
+		// separately from the time.Time values above.
+		planCreatedAt = formatStoredTime(plan.CreatedAt)
 	}
 	syncIssues, syncErrors, syncWarnings := buildSyncIssues(s.syncer.Issues())
 	lastRun, lastStatus := s.syncer.LastRun()
@@ -266,6 +273,9 @@ func (s *Server) buildPageData() (pageData, error) {
 		LastStatus:      lastStatus,
 		Plan:            plan,
 		AutoSyncEnabled: autoSyncEnabled,
+		PlanCreatedAt:    planCreatedAt,
+		AutoSyncPossible: autoSyncInterval > 0,
+		SyncIntervalText: autoSyncInterval.String(),
 	}, nil
 }
 
@@ -1096,11 +1106,60 @@ func (s *Server) handleClearPlan(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// displayLoc is the timezone the UI renders timestamps in. Storage, logging and
+// the Grafana/Graph APIs all stay UTC - this only changes what a human reads.
+var displayLoc = time.UTC
+
+// autoSyncInterval mirrors SYNC_INTERVAL so the UI can tell the operator when
+// the "Automatische Updates" toggle cannot do anything. At 0 the scheduler
+// goroutine is never started, and the toggle then sets a flag nothing reads.
+var autoSyncInterval time.Duration
+
+// SetAutoSyncInterval tells the UI what SYNC_INTERVAL the process was started
+// with.
+func SetAutoSyncInterval(d time.Duration) { autoSyncInterval = d }
+
+// SetDisplayLocation switches the UI timezone, by IANA name (Europe/Luxembourg).
+// An empty name or "UTC" keeps UTC.
+//
+// The tz database is embedded in the binary via the time/tzdata import in main,
+// so this resolves on a bare alpine image with no tzdata package installed.
+func SetDisplayLocation(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.EqualFold(name, "UTC") {
+		displayLoc = time.UTC
+		return nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return err
+	}
+	displayLoc = loc
+	return nil
+}
+
+// DisplayLocation is the timezone currently used for rendering, for startup
+// logging.
+func DisplayLocation() string { return displayLoc.String() }
+
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return "never"
 	}
-	return t.Format(time.RFC3339)
+	// The zone abbreviation is deliberate: "13:04:27 CEST" cannot be misread as
+	// UTC, which a bare local time silently can.
+	return t.In(displayLoc).Format("2006-01-02 15:04:05 MST")
+}
+
+// formatStoredTime renders an RFC3339 string from the store in the display
+// timezone. Anything that does not parse is passed through unchanged rather
+// than replaced by an error, so a stray value stays visible.
+func formatStoredTime(value string) string {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	if err != nil {
+		return value
+	}
+	return formatTime(t)
 }
 
 func (s *Server) loadGrafanaTeams(orgs []store.Org, mappings []store.Mapping) ([]grafanaTeamView, string) {

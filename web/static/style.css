@@ -475,3 +475,20 @@ footer {
     padding: 24px;
   }
 }
+
+/* Sits next to the "Automatische Updates" toggle. The toggle only stores a
+   flag; the scheduler that reads it exists solely when SYNC_INTERVAL > 0, so
+   say which of the two states you are in rather than leaving it ambiguous. */
+.switch-warning {
+  margin-left: .6rem;
+  font-size: .85rem;
+  color: #b45309;
+  white-space: nowrap;
+}
+
+.switch-note {
+  margin-left: .6rem;
+  font-size: .85rem;
+  opacity: .65;
+  white-space: nowrap;
+}

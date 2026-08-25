@@ -25,6 +25,13 @@
           <span class="slider" aria-hidden="true"></span>
           <span class="switch-text">Automatische Updates</span>
         </label>
+        {{if not .AutoSyncPossible}}
+        <span class="switch-warning" title="The scheduler goroutine is only started when SYNC_INTERVAL is greater than zero. Set it to a duration such as 15m in deploy/.env and recreate the container.">
+          &#9888; SYNC_INTERVAL=0 &mdash; this toggle has no effect
+        </span>
+        {{else}}
+        <span class="switch-note">every {{.SyncIntervalText}}</span>
+        {{end}}
       </form>
       <form action="/sync/fetch" method="post">
         <button type="submit" class="soft" title="Fetches the latest EntraID and Grafana data.">1. Fetch EntraID + Grafana</button>
@@ -45,7 +52,7 @@
         <span>Last run: {{.LastRun}}</span>
         <span>Status: {{.LastStatus}}</span>
         {{if .Plan}}
-        <span>Plan: {{.Plan.CreatedAt}} ({{.Plan.Status}})</span>
+        <span>Plan: {{.PlanCreatedAt}} ({{.Plan.Status}})</span>
         {{end}}
       </div>
     </div>

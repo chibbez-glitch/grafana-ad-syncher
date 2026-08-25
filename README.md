@@ -44,6 +44,7 @@ Recognised keys:
 - `ALLOW_REMOVE_TEAM_MEMBERS` (`true`/`false`)
 - `DATA_DIR` (default `/data`)
 - `LISTEN_ADDR` (default `:8080`)
+- `DISPLAY_TIMEZONE` (default `Europe/Luxembourg`) — IANA zone for UI timestamps only; log and API stay UTC
 - `API_TOKEN` — bearer token for the log API below. Empty means "generate one on first start"; there is no unauthenticated mode.
 - `LOG_BUFFER_LINES` (default `5000`) — how many app log lines are kept in memory
 - `DOCKER_SOCKET` (default `/var/run/docker.sock`)
