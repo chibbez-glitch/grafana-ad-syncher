@@ -17,12 +17,17 @@ This service syncs Entra ID group memberships into Grafana teams, assigns org ro
   - `Group.Read.All`
 
 ## Configuration
-All settings are baked into [`deploy/docker-compose.yml`](deploy/docker-compose.yml).
-Edit the file in the git repo, commit, push, then redeploy. The two
-`REPLACE_ME_*` placeholders (Grafana admin password and Entra client secret)
-must be replaced before the first deploy — `deploy.sh` aborts otherwise.
+Everything lives in **one file**: `deploy/.env`, next to
+[`deploy/docker-compose.yml`](deploy/docker-compose.yml). The compose file loads
+it wholesale via `env_file:` and contains no settings and no secrets of its own —
+it is tracked in a public repository, so nothing sensitive may go in it.
 
-Recognised env vars (set on the `grafana-sync` container in the compose file):
+`deploy/.env` is never committed (`.gitignore` covers it). `deploy.sh` creates
+it from [`deploy/env.example`](deploy/env.example) on the first run of a host,
+and carries it across the wipe-and-re-clone on every later run.
+`env.example` documents every key inline and is the file to read when in doubt.
+
+Recognised keys:
 
 - `GRAFANA_URL` (default `http://grafana:3000` — talks to the grafana container in the shared docker network)
 - `GRAFANA_INSECURE_TLS` (`true` to skip TLS verification — only relevant if `GRAFANA_URL` is HTTPS)
@@ -44,18 +49,14 @@ Recognised env vars (set on the `grafana-sync` container in the compose file):
 - `DOCKER_SOCKET` (default `/var/run/docker.sock`)
 - `CONTAINER_NAME` (default `grafana-sync`) — the container `/api/logs/docker` reads by default
 
-Secrets are **not** in the compose file: `deploy.sh` copies
-`/etc/grafana-ad-syncher.env` to `deploy/.env`, which is where compose resolves
-`${VAR}` from. See [`deploy/env.example`](deploy/env.example).
-
 ## Log API
 
 Troubleshooting endpoints on the same port as the UI (`8080`), all read-only
 and all behind a bearer token.
 
-Getting the token — either pin one in `/etc/grafana-ad-syncher.env`
-(`API_TOKEN=$(openssl rand -hex 32)`), or let the app generate one on first
-start and read it back once from the container log:
+Getting the token — either pin one in `deploy/.env` (`API_TOKEN=` plus the
+output of `openssl rand -hex 32`), or let the app generate one on first start
+and read it back once from the container log:
 
 ```bash
 docker logs grafana-sync | grep "shown here once"
@@ -94,12 +95,15 @@ endpoint says so explicitly rather than failing vaguely.
 > `/api/logs/app` keeps working without it.
 
 ## Usage
-1. Run `bash deploy.sh` on the target host. It wipes `/docker/grafana-ad-syncher`,
-   re-clones the repo and runs `docker compose up -d --build`.
-2. Open the UI at `http://<host>:8080`.
-3. Create a Grafana Org entry using the **Grafana Org ID** from Grafana.
-4. Add mappings of Entra Group IDs to Grafana Team names.
-5. Click **Preview sync** to review planned actions, then **Apply plan**.
+1. Run `./deploy.sh` on the target host. On the first run it creates
+   `/docker/grafana-ad-syncher/deploy/.env` from the template and stops.
+2. Fill in the secrets: `vi /docker/grafana-ad-syncher/deploy/.env`.
+3. Run `./deploy.sh` again. It wipes and re-clones `/docker/grafana-ad-syncher`
+   (keeping `deploy/.env`) and runs `docker compose up -d --build`.
+4. Open the UI at `http://<host>:8080`.
+5. Create a Grafana Org entry using the **Grafana Org ID** from Grafana.
+6. Add mappings of Entra Group IDs to Grafana Team names.
+7. Click **Preview sync** to review planned actions, then **Apply plan**.
 
 ## Notes
 - Org Role can be set per org or per mapping (role override).
