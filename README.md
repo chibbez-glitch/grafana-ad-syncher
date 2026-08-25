@@ -39,6 +39,59 @@ Recognised env vars (set on the `grafana-sync` container in the compose file):
 - `ALLOW_REMOVE_TEAM_MEMBERS` (`true`/`false`)
 - `DATA_DIR` (default `/data`)
 - `LISTEN_ADDR` (default `:8080`)
+- `API_TOKEN` — bearer token for the log API below. Empty means "generate one on first start"; there is no unauthenticated mode.
+- `LOG_BUFFER_LINES` (default `5000`) — how many app log lines are kept in memory
+- `DOCKER_SOCKET` (default `/var/run/docker.sock`)
+- `CONTAINER_NAME` (default `grafana-sync`) — the container `/api/logs/docker` reads by default
+
+Secrets are **not** in the compose file: `deploy.sh` copies
+`/etc/grafana-ad-syncher.env` to `deploy/.env`, which is where compose resolves
+`${VAR}` from. See [`deploy/env.example`](deploy/env.example).
+
+## Log API
+
+Troubleshooting endpoints on the same port as the UI (`8080`), all read-only
+and all behind a bearer token.
+
+Getting the token — either pin one in `/etc/grafana-ad-syncher.env`
+(`API_TOKEN=$(openssl rand -hex 32)`), or let the app generate one on first
+start and read it back once from the container log:
+
+```bash
+docker logs grafana-sync | grep "shown here once"
+```
+
+The generated token is persisted in the data volume, so it survives restarts.
+It is printed in full only on the start that created it; later starts log just
+the first 8 characters.
+
+```bash
+T=<token>
+H="Authorization: Bearer $T"
+
+curl -sH "$H" http://<host>:8080/api/logs                    # overview + docker socket status
+curl -sH "$H" "http://<host>:8080/api/logs/app?tail=200"     # this app, from the in-memory ring buffer
+curl -sH "$H" "http://<host>:8080/api/logs/containers"       # what the daemon can see
+curl -sH "$H" "http://<host>:8080/api/logs/docker?container=grafana&tail=500&since=30m"
+```
+
+Parameters: `tail` (lines; `all` allowed on the docker route), `since`
+(`15m`, `2h`, or an RFC3339 timestamp), `q` (case-insensitive substring),
+`stream` (`stdout`/`stderr`, docker route only), `format` (`text`, the default,
+or `json`). `?token=<token>` works instead of the header when a browser tab is
+easier than curl.
+
+`/api/logs/app` is a copy of what the app writes to stderr, so it works with no
+extra privileges. `/api/logs/docker` needs `/var/run/docker.sock` bind-mounted
+and the container joined to the socket's group — `deploy.sh` detects that gid
+and writes `DOCKER_GID` into `deploy/.env`. If the mount is missing the
+endpoint says so explicitly rather than failing vaguely.
+
+> Access to the docker socket is equivalent to root on the host, and `:ro` on
+> the mount does not change that — it only stops the socket file being
+> replaced. `API_TOKEN` is the only thing guarding it. Remove the socket mount
+> from `deploy/docker-compose.yml` if that trade is not acceptable;
+> `/api/logs/app` keeps working without it.
 
 ## Usage
 1. Run `bash deploy.sh` on the target host. It wipes `/docker/grafana-ad-syncher`,

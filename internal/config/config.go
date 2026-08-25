@@ -31,6 +31,19 @@ type Config struct {
 	// existing store value (toggled via the web UI) is left alone.
 	AutoSyncOnStart    bool
 	AutoSyncOnStartSet bool
+
+	// APIToken guards the /api/logs/* troubleshooting endpoints. Left empty
+	// here, main generates one on first start and persists it in the store, so
+	// the endpoints are never accidentally unauthenticated.
+	APIToken string
+	// LogBufferLines is how many recent log lines are kept in memory for
+	// /api/logs/app. They cost roughly 200 bytes each.
+	LogBufferLines int
+	// DockerSocket is the daemon socket used by /api/logs/docker. It only works
+	// if it is bind-mounted into this container.
+	DockerSocket string
+	// ContainerName is what /api/logs/docker reads when no ?container= is given.
+	ContainerName string
 }
 
 func Load() Config {
@@ -52,6 +65,10 @@ func Load() Config {
 		EntraClientSecret:     getEnv("ENTRA_CLIENT_SECRET", ""),
 		EntraAuthorityBaseURL: getEnv("ENTRA_AUTHORITY_BASE_URL", "https://login.microsoftonline.com"),
 		GraphAPIBaseURL:       getEnv("GRAPH_API_BASE_URL", "https://graph.microsoft.com/v1.0"),
+		APIToken:              strings.TrimSpace(getEnv("API_TOKEN", "")),
+		LogBufferLines:        getEnvInt("LOG_BUFFER_LINES", 5000),
+		DockerSocket:          getEnv("DOCKER_SOCKET", "/var/run/docker.sock"),
+		ContainerName:         getEnv("CONTAINER_NAME", "grafana-sync"),
 	}
 	if raw, ok := os.LookupEnv("AUTO_SYNC_ON_START"); ok && strings.TrimSpace(raw) != "" {
 		if parsed, err := strconv.ParseBool(strings.TrimSpace(raw)); err == nil {
@@ -73,6 +90,16 @@ func getEnvBool(key string, fallback bool) bool {
 	if v := os.Getenv(key); v != "" {
 		parsed, err := strconv.ParseBool(v)
 		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if v := os.Getenv(key); v != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		if err == nil && parsed > 0 {
 			return parsed
 		}
 	}

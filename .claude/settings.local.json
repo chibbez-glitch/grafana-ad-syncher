@@ -3,7 +3,20 @@
     "allow": [
       "Bash(go build *)",
       "PowerShell(go build ./...)",
-      "Bash(chmod +x deploy.sh)"
+      "Bash(chmod +x deploy.sh)",
+      "Bash(git push *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git update-index *)",
+      "Bash(git reset *)",
+      "PowerShell($g = \\(Get-Command go -ErrorAction SilentlyContinue\\); if \\($g\\) { $g.Source } else { \"go not on PATH\"; Get-ChildItem \"C:\\\\Program Files\\\\Go\\\\bin\",\"$env:LOCALAPPDATA\\\\Programs\\\\Go\\\\bin\" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName })",
+      "PowerShell(foreach \\($c in 'docker','go','podman'\\) { $p = Get-Command $c -ErrorAction SilentlyContinue; if \\($p\\) { \"$c -> $\\($p.Source\\)\" } else { \"$c -> missing\" } })",
+      "Bash(sed -i 's/\\\\bphasePlan\\\\b/PhasePlan/g; s/\\\\bphaseApply\\\\b/PhaseApply/g; s/\\\\bseverityError\\\\b/SeverityError/g; s/\\\\bseverityWarning\\\\b/SeverityWarning/g' internal/sync/sync.go)",
+      "Bash(echo \"--- remaining lowercase refs: $? ---\")",
+      "Bash(git commit *)",
+      "Bash(git fetch *)",
+      "Bash(git rev-list *)",
+      "Bash(grep -nE \"env_file|\\\\\\\\\\\\$\\\\{\" deploy/docker-compose.yml)"
     ]
   }
 }

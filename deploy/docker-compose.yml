@@ -52,10 +52,36 @@ services:
       ENTRA_TENANT_ID: "${ENTRA_TENANT_ID}"
       ENTRA_CLIENT_ID: "${ENTRA_CLIENT_ID}"
       ENTRA_CLIENT_SECRET: "${ENTRA_CLIENT_SECRET}"
+      # Guards /api/logs/* on the same port as the UI. May stay empty: the app
+      # then generates a token on first start, persists it in the data volume
+      # and prints it once to the container log. Set it here to pin a known
+      # value instead. It is never optional - with no token the endpoints are
+      # switched off, not left open.
+      API_TOKEN: "${API_TOKEN}"
+      # Ring buffer size for /api/logs/app, roughly 200 bytes per line.
+      LOG_BUFFER_LINES: "5000"
+      # What /api/logs/docker reads when no ?container= is passed.
+      CONTAINER_NAME: "grafana-sync"
     ports:
       - "8080:8080"
+    # The container runs as a non-root user, so reading the bind-mounted docker
+    # socket requires the gid that owns it on this host. deploy.sh detects it
+    # and writes DOCKER_GID into deploy/.env; 999 is only a fallback and is
+    # wrong on plenty of distributions.
+    group_add:
+      - "${DOCKER_GID:-999}"
     volumes:
       - grafana-sync-data:/data
+      # Read-only access to the daemon for /api/logs/docker, which is how the
+      # grafana container log becomes visible from here.
+      #
+      # Be aware what this grants: `:ro` stops the socket file being replaced,
+      # it does NOT make the daemon read-only. Anything that can reach this
+      # socket can control docker on the host, which is equivalent to root. The
+      # only thing standing between the network and it is API_TOKEN. Drop this
+      # mount if that trade is not acceptable - /api/logs/app keeps working and
+      # /api/logs/docker then returns a clear "socket not mounted" error.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - grafana_app-network
 

@@ -3,6 +3,9 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,15 +16,28 @@ import (
 	"time"
 
 	"grafana-ad-syncher/internal/config"
+	"grafana-ad-syncher/internal/dockerlog"
 	"grafana-ad-syncher/internal/entra"
 	"grafana-ad-syncher/internal/grafana"
+	"grafana-ad-syncher/internal/logbuf"
 	"grafana-ad-syncher/internal/store"
 	syncer "grafana-ad-syncher/internal/sync"
 	"grafana-ad-syncher/internal/web"
 )
 
+// apiTokenSettingKey is where an auto-generated token is persisted, so it
+// survives restarts and stays stable across redeploys of the same volume.
+const apiTokenSettingKey = "api_token"
+
 func main() {
 	cfg := config.Load()
+
+	// UTC timestamps so app log lines line up with the docker log timestamps
+	// that /api/logs/docker returns. Install the ring buffer before anything
+	// else logs, so the API can serve the whole startup sequence.
+	log.SetFlags(log.LstdFlags | log.LUTC)
+	logBuffer := logbuf.New(cfg.LogBufferLines).Install()
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		log.Fatalf("data dir: %v", err)
 	}
@@ -31,6 +47,11 @@ func main() {
 		log.Fatalf("store: %v", err)
 	}
 	defer st.Close()
+
+	apiToken, err := resolveAPIToken(st, cfg.APIToken)
+	if err != nil {
+		log.Fatalf("api token: %v", err)
+	}
 
 	if cfg.AutoSyncOnStartSet {
 		if err := st.SetAutoSyncEnabled(cfg.AutoSyncOnStart); err != nil {
@@ -78,6 +99,17 @@ func main() {
 		log.Fatalf("templates: %v", err)
 	}
 	server.Register(mux)
+
+	// Troubleshooting endpoints, on the same mux and therefore the same port as
+	// the UI. Token-guarded; see resolveAPIToken.
+	dockerClient := dockerlog.New(cfg.DockerSocket)
+	web.NewLogsAPI(logBuffer, dockerClient, apiToken, cfg.ContainerName).Register(mux)
+	if err := dockerClient.Available(); err != nil {
+		log.Printf("log api: docker socket unavailable, /api/logs/docker will fail: %v", err)
+	} else {
+		log.Printf("log api: docker socket %s reachable", dockerClient.Socket())
+	}
+
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join("web", "static")))))
 
 	httpServer := &http.Server{
@@ -101,6 +133,54 @@ func main() {
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("http: %v", err)
 	}
+}
+
+// resolveAPIToken decides which token guards /api/logs/*.
+//
+// API_TOKEN from the environment always wins, so the operator can pin a known
+// value in /etc/grafana-ad-syncher.env. Otherwise we reuse the token persisted
+// in the store, and only if there is none do we mint one — that way the
+// endpoints are usable straight after a deploy without anyone having to
+// configure a secret first, and the value does not change on every restart.
+//
+// The generated token is logged in full exactly once, on the start that
+// created it. Later starts log only a prefix: the log is retrievable over the
+// network via this very API, so a token that reappeared in it on every restart
+// would be a standing giveaway to anyone who already has it.
+func resolveAPIToken(st *store.Store, fromEnv string) (string, error) {
+	if fromEnv != "" {
+		log.Printf("log api: token taken from API_TOKEN (prefix %s)", tokenPrefix(fromEnv))
+		return fromEnv, nil
+	}
+
+	stored, ok, err := st.GetSetting(apiTokenSettingKey)
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", apiTokenSettingKey, err)
+	}
+	if ok && strings.TrimSpace(stored) != "" {
+		token := strings.TrimSpace(stored)
+		log.Printf("log api: token loaded from store (prefix %s); set API_TOKEN to pin a known value", tokenPrefix(token))
+		return token, nil
+	}
+
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate token: %w", err)
+	}
+	token := hex.EncodeToString(buf)
+	if err := st.SetSetting(apiTokenSettingKey, token); err != nil {
+		return "", fmt.Errorf("persist %s: %w", apiTokenSettingKey, err)
+	}
+	log.Printf("log api: generated a new API token, shown here once: %s", token)
+	log.Printf("log api: use it as `Authorization: Bearer <token>` against /api/logs/*, or pin your own via API_TOKEN")
+	return token, nil
+}
+
+func tokenPrefix(token string) string {
+	if len(token) <= 8 {
+		return "********"
+	}
+	return token[:8] + "..."
 }
 
 // logEtcHosts prints the contents of /etc/hosts so we can verify whether the

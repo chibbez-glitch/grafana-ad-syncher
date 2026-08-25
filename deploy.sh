@@ -41,6 +41,25 @@ git clone "$repo_url" .
 # which is deploy/. Restore it here, since the wipe above removed it.
 install -m 600 "$env_source" deploy/.env
 
+# Reading the bind-mounted docker socket needs the gid that owns it on *this*
+# host, because the container runs as a non-root user. Detect it instead of
+# hardcoding a value that differs per distribution. Appended last so it wins
+# over any stale DOCKER_GID in $env_source.
+if [[ -S /var/run/docker.sock ]]; then
+  docker_gid="$(stat -c '%g' /var/run/docker.sock)"
+  printf '\nDOCKER_GID=%s\n' "$docker_gid" >> deploy/.env
+  echo "docker socket owned by gid $docker_gid; container joins that group"
+else
+  echo "WARNING: /var/run/docker.sock not found - /api/logs/docker will be unavailable." >&2
+fi
+
+# API_TOKEN guards /api/logs/*. Leaving it empty is fine: the app generates one
+# on first start and prints it to the container log. But compose warns loudly
+# about undefined variables, so make sure the key exists.
+if ! grep -q '^API_TOKEN=' deploy/.env; then
+  printf 'API_TOKEN=\n' >> deploy/.env
+fi
+
 go mod tidy
 cd deploy
 docker compose up -d --build
