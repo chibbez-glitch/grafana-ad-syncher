@@ -84,7 +84,10 @@ func main() {
 		grafanaClient.LogProbe(grafanaClient.Probe(probeCtx))
 		probeCancel()
 	}
-	clientSyncer := syncer.New(st, grafanaClient, entraClient, cfg.DefaultUserRole, cfg.AllowCreateUsers, cfg.AllowRemoveMembers)
+	clientSyncer := syncer.New(st, grafanaClient, entraClient, cfg.DefaultUserRole, cfg.AllowCreateUsers, cfg.AllowRemoveMembers, cfg.ManageOrgRoles)
+	if !cfg.ManageOrgRoles {
+		log.Printf("org roles: MANAGE_ORG_ROLES=false - Grafana owns them (it maps them from the OAuth token); no update_user_role actions will be planned")
+	}
 
 	// Say out loud whether unattended syncing is possible at all. With
 	// SYNC_INTERVAL=0 the loop below is never started, so the "Automatische

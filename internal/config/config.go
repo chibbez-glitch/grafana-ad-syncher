@@ -20,6 +20,7 @@ type Config struct {
 	DefaultUserRole       string
 	AllowCreateUsers      bool
 	AllowRemoveMembers    bool
+	ManageOrgRoles        bool
 	EntraTenantID         string
 	EntraClientID         string
 	EntraClientSecret     string
@@ -63,6 +64,7 @@ func Load() Config {
 		DefaultUserRole:       getEnv("DEFAULT_USER_ROLE", "Viewer"),
 		AllowCreateUsers:      getEnvBool("ALLOW_CREATE_USERS", true),
 		AllowRemoveMembers:    getEnvBool("ALLOW_REMOVE_TEAM_MEMBERS", true),
+		ManageOrgRoles:        getEnvBool("MANAGE_ORG_ROLES", true),
 		EntraTenantID:         getEnv("ENTRA_TENANT_ID", ""),
 		EntraClientID:         getEnv("ENTRA_CLIENT_ID", ""),
 		EntraClientSecret:     getEnv("ENTRA_CLIENT_SECRET", ""),

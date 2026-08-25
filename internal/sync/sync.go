@@ -22,6 +22,11 @@ type Syncer struct {
 	defaultUserRole  string
 	allowCreateUsers bool
 	allowRemoveUsers bool
+	// manageOrgRoles is false when Grafana owns org roles itself, which it does
+	// whenever it maps them from the OAuth token. Grafana then marks those users
+	// org.externallySynced and answers 403 to any role change, so planning one
+	// produces an action that can never succeed and reappears every run.
+	manageOrgRoles   bool
 
 	mu          sync.Mutex
 	lastRun     time.Time
@@ -115,7 +120,7 @@ type Action struct {
 	Note            string
 }
 
-func New(store *store.Store, grafana *grafana.Client, entra *entra.Client, defaultRole string, allowCreateUsers bool, allowRemoveUsers bool) *Syncer {
+func New(store *store.Store, grafana *grafana.Client, entra *entra.Client, defaultRole string, allowCreateUsers bool, allowRemoveUsers bool, manageOrgRoles bool) *Syncer {
 	return &Syncer{
 		store:            store,
 		grafana:          grafana,
@@ -123,6 +128,7 @@ func New(store *store.Store, grafana *grafana.Client, entra *entra.Client, defau
 		defaultUserRole:  defaultRole,
 		allowCreateUsers: allowCreateUsers,
 		allowRemoveUsers: allowRemoveUsers,
+		manageOrgRoles:   manageOrgRoles,
 	}
 }
 
@@ -701,6 +707,14 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 				continue
 			}
 			if !strings.EqualFold(existing.Role, role) {
+				// When Grafana derives org roles from the OAuth token it marks
+				// those users org.externallySynced and rejects every role change
+				// with 403. Planning one anyway produces an action that can never
+				// succeed: it fails, stays pending, and comes back on the next
+				// run for ever. A plan that never empties is a plan nobody reads.
+				if !s.manageOrgRoles {
+					continue
+				}
 				userIDValue := userID(user)
 				if userIDValue == 0 {
 					userIDValue = existing.ID

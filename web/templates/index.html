@@ -256,8 +256,10 @@
     <span class="issue-count">{{.SyncErrorCount}} errors &middot; {{.SyncWarnCount}} warnings</span>
   </h2>
   <p class="issue-hint">
-    Problems from the last plan/apply. <strong>Warning</strong> means something was skipped
-    (and will not appear in the plan at all); <strong>error</strong> means an action was attempted and failed.
+    Problems from the last plan/apply. <strong>Error</strong> means an action was attempted
+    and failed. <strong>Warning</strong> means the sync carried on without doing something &mdash;
+    either it was never planned (phase <em>plan</em>), or it was planned, attempted and refused
+    by Grafana for a reason that is not a fault (phase <em>apply</em>).
   </p>
   <table>
     <thead>
