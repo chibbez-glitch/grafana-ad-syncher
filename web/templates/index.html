@@ -265,7 +265,10 @@
   {{if .OrphansErr}}
   <p class="danger">Could not check against Entra: {{.OrphansErr}}</p>
   {{else if not .Orphans}}
-  <p class="muted">Every Grafana account maps to an active person in a mapped group.</p>
+  <p class="muted">
+    Every Grafana account maps to an active person in a mapped group.
+    {{if .OrphansHidden}}({{.OrphansHidden}} excluded via REVIEW_EXCLUDE_USERS.){{end}}
+  </p>
   {{else}}
   <table>
     <thead>
@@ -289,6 +292,9 @@
       {{end}}
     </tbody>
   </table>
+  {{if .OrphansHidden}}
+  <p class="muted">{{.OrphansHidden}} further account(s) excluded via REVIEW_EXCLUDE_USERS.</p>
+  {{end}}
   {{end}}
 </section>
 

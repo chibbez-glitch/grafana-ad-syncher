@@ -42,6 +42,7 @@ type externalCache struct {
 	folderPerms     []folderPermGroup
 	folderPermsErr  string
 	orphans         []orphanView
+	orphansHidden   int
 	orphansErr      string
 	refreshedAt     time.Time
 }
@@ -115,6 +116,7 @@ type pageData struct {
 	FolderPerms      []folderPermGroup
 	Orphans          []orphanView
 	OrphansErr       string
+	OrphansHidden    int
 	FolderPermsErr   string
 	PlanGroups       []planTeamGroup
 	SyncIssues       []syncIssueView
@@ -266,7 +268,7 @@ func (s *Server) buildPageData() (pageData, error) {
 		// separately from the time.Time values above.
 		planCreatedAt = formatStoredTime(plan.CreatedAt)
 	}
-	orphans, orphansErr := s.cachedOrphans()
+	orphans, orphansHidden, orphansErr := s.cachedOrphans()
 	syncIssues, syncErrors, syncWarnings := buildSyncIssues(s.syncer.Issues())
 	lastRun, lastStatus := s.syncer.LastRun()
 	autoSyncEnabled := true
@@ -290,6 +292,7 @@ func (s *Server) buildPageData() (pageData, error) {
 		FolderPermsErr:  folderPermsErr,
 		Orphans:         orphans,
 		OrphansErr:      orphansErr,
+		OrphansHidden:   orphansHidden,
 		PlanGroups:      planGroups,
 		SyncIssues:      syncIssues,
 		SyncErrorCount:  syncErrors,
@@ -426,7 +429,7 @@ func (s *Server) refreshExternalData() {
 	cache.entraGroups, cache.entraGroupsErr = s.loadEntraGroups(orgs, mappings)
 	cache.entraUsers, cache.entraUsersErr = s.loadEntraUsers()
 	cache.folderPerms, cache.folderPermsErr = s.loadGrafanaFolderPermissions(orgs)
-	cache.orphans, cache.orphansErr = s.loadOrphans(cache.grafanaUsers, cache.entraUsers)
+	cache.orphans, cache.orphansHidden, cache.orphansErr = s.loadOrphans(cache.grafanaUsers, cache.entraUsers)
 
 	s.cacheMu.Lock()
 	s.cache = cache
@@ -434,12 +437,40 @@ func (s *Server) refreshExternalData() {
 	s.cacheMu.Unlock()
 }
 
+// reviewExcluded holds the logins and e-mails kept out of the review panel,
+// lower-cased. Set once at startup.
+var reviewExcluded = map[string]struct{}{}
+
+// SetReviewExclusions configures which accounts the review panel ignores.
+//
+// Service and break-glass accounts have no Entra person behind them by design.
+// Without this they sit in the panel permanently, and a list with permanent
+// entries stops being read - the same way the four org-role warnings did.
+func SetReviewExclusions(names []string) {
+	next := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if name != "" {
+			next[name] = struct{}{}
+		}
+	}
+	reviewExcluded = next
+}
+
+func isReviewExcluded(login, email string) bool {
+	if _, ok := reviewExcluded[strings.ToLower(strings.TrimSpace(login))]; ok {
+		return true
+	}
+	_, ok := reviewExcluded[strings.ToLower(strings.TrimSpace(email))]
+	return ok
+}
+
 // cachedOrphans reads the orphan list from the cache. Callers reach it after
 // getExternalData, which is what keeps the cache fresh.
-func (s *Server) cachedOrphans() ([]orphanView, string) {
+func (s *Server) cachedOrphans() ([]orphanView, int, string) {
 	s.cacheMu.RLock()
 	defer s.cacheMu.RUnlock()
-	return s.cache.orphans, s.cache.orphansErr
+	return s.cache.orphans, s.cache.orphansHidden, s.cache.orphansErr
 }
 
 // loadOrphans lists Grafana accounts that no longer correspond to an active
@@ -449,19 +480,19 @@ func (s *Server) cachedOrphans() ([]orphanView, string) {
 // groups, because those two answer different questions: "in no mapped group"
 // is routine, "not in Entra at all" is a leaver. Telling them apart is the
 // whole point of the panel, and the mapped-group membership alone cannot.
-func (s *Server) loadOrphans(grafanaUsers []grafanaUserView, entraUsers []entraUserView) ([]orphanView, string) {
+func (s *Server) loadOrphans(grafanaUsers []grafanaUserView, entraUsers []entraUserView) ([]orphanView, int, string) {
 	if s.entra == nil {
-		return nil, "entra client not configured"
+		return nil, 0, "entra client not configured"
 	}
 	if len(grafanaUsers) == 0 {
-		return nil, ""
+		return nil, 0, ""
 	}
 	start := time.Now()
 
 	tenant, err := s.entra.ListUsers()
 	if err != nil {
 		log.Printf("ui: orphan check: entra user list failed: %v", err)
-		return nil, err.Error()
+		return nil, 0, err.Error()
 	}
 
 	// Both mail and UPN, because Grafana stores whichever one the login provider
@@ -492,6 +523,7 @@ func (s *Server) loadOrphans(grafanaUsers []grafanaUserView, entraUsers []entraU
 	}
 
 	out := make([]orphanView, 0)
+	hidden := 0
 	for _, user := range grafanaUsers {
 		email := strings.TrimSpace(strings.ToLower(user.Email))
 		login := strings.TrimSpace(strings.ToLower(user.Login))
@@ -500,6 +532,12 @@ func (s *Server) loadOrphans(grafanaUsers []grafanaUserView, entraUsers []entraU
 			continue
 		}
 		if _, ok := inMappedGroup[login]; ok {
+			continue
+		}
+		// Counted, not silently dropped: the panel says how many it is hiding, so
+		// nobody has to wonder why an account never shows up.
+		if isReviewExcluded(login, email) {
+			hidden++
 			continue
 		}
 
@@ -537,7 +575,7 @@ func (s *Server) loadOrphans(grafanaUsers []grafanaUserView, entraUsers []entraU
 
 	log.Printf("ui: orphan check: %d of %d grafana accounts unaccounted for, %d entra users scanned in %s",
 		len(out), len(grafanaUsers), len(tenant), time.Since(start).Round(time.Millisecond))
-	return out, ""
+	return out, hidden, ""
 }
 
 func orphanRank(status string) int {

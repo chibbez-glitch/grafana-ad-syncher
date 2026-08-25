@@ -123,6 +123,8 @@ func main() {
 		log.Fatalf("templates: %v", err)
 	}
 	web.SetAutoSyncInterval(cfg.SyncInterval)
+	// The account this service authenticates as is never a review candidate.
+	web.SetReviewExclusions(append(cfg.ReviewExcludeUsers, cfg.GrafanaAdminUser))
 	server.Register(mux)
 
 	// Troubleshooting endpoints, on the same mux and therefore the same port as

@@ -42,6 +42,7 @@ Recognised keys:
 - `DEFAULT_USER_ROLE` (`Viewer`, `Editor`, `Admin`)
 - `ALLOW_CREATE_USERS` (`true`/`false`)
 - `ALLOW_REMOVE_TEAM_MEMBERS` (`true`/`false`) — the only destructive action this service has; it removes a user from a *team*, never deletes the user
+- `REVIEW_EXCLUDE_USERS` (default `admin`) — comma-separated logins/e-mails kept out of the “Accounts to review” panel; `GRAFANA_ADMIN_USER` is excluded automatically
 - `MANAGE_ORG_ROLES` (`true`/`false`, default `true`) — set `false` when Grafana maps org roles from the OAuth token itself. It then rejects API role changes with `org.externallySynced`, so the action can never succeed and would reappear in every plan
 - `DATA_DIR` (default `/data`)
 - `LISTEN_ADDR` (default `:8080`)

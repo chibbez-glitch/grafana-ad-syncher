@@ -21,6 +21,10 @@ type Config struct {
 	AllowCreateUsers      bool
 	AllowRemoveMembers    bool
 	ManageOrgRoles        bool
+	// ReviewExcludeUsers are Grafana logins or e-mails kept out of the "Accounts
+	// to review" panel: service and break-glass accounts that legitimately have no
+	// Entra person behind them and would otherwise sit there for ever.
+	ReviewExcludeUsers    []string
 	EntraTenantID         string
 	EntraClientID         string
 	EntraClientSecret     string
@@ -65,6 +69,7 @@ func Load() Config {
 		AllowCreateUsers:      getEnvBool("ALLOW_CREATE_USERS", true),
 		AllowRemoveMembers:    getEnvBool("ALLOW_REMOVE_TEAM_MEMBERS", true),
 		ManageOrgRoles:        getEnvBool("MANAGE_ORG_ROLES", true),
+		ReviewExcludeUsers:    getEnvList("REVIEW_EXCLUDE_USERS", "admin"),
 		EntraTenantID:         getEnv("ENTRA_TENANT_ID", ""),
 		EntraClientID:         getEnv("ENTRA_CLIENT_ID", ""),
 		EntraClientSecret:     getEnv("ENTRA_CLIENT_SECRET", ""),
@@ -120,4 +125,19 @@ func getEnvDuration(key string, fallback time.Duration) time.Duration {
 		}
 	}
 	return fallback
+}
+
+// getEnvList splits a comma-separated value into trimmed, lower-cased entries.
+// Empty entries are dropped so a trailing comma is harmless.
+func getEnvList(key, fallback string) []string {
+	raw := getEnv(key, fallback)
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
