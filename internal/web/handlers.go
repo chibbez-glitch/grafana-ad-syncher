@@ -1157,9 +1157,9 @@ func (s *Server) loadGrafanaUsers(orgs []store.Org) ([]grafanaUserView, string) 
 			}
 		}
 	}
-	users, err := s.grafana.ListAdminUsers()
+	users, err := s.grafana.ListAllUsers()
 	if err != nil {
-		log.Printf("ui: grafana admin users fetch failed: %v", err)
+		log.Printf("ui: grafana user list fetch failed, falling back to org member lists: %v", err)
 		userByID := map[int64]grafanaUserView{}
 		for _, org := range orgs {
 			orgUsers, err := s.grafana.ListOrgUsers(org.GrafanaOrgID)

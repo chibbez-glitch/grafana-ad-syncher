@@ -60,9 +60,14 @@ func StatusOf(err error) int {
 
 // IsPermissionDenied reports whether err is Grafana refusing the call for lack
 // of rights. Only 401/403 count: /api/users/lookup answers 404 for a genuinely
-// unknown user, so treating 404 as "denied" would hide real misses. Server-admin
-// endpoints such as /api/admin/users answer 404 to a service account token too,
-// which is why those are handled at the call site instead.
+// unknown user, so treating 404 as "denied" would hide real misses.
+//
+// A previous version of this comment claimed server-admin endpoints answer 404
+// to a service account token. That is wrong, and it sent us chasing a
+// permissions problem that did not exist: the 404 we kept seeing came from
+// GET /api/admin/users, a route Grafana does not define at all (the path is
+// POST-only). Denied is always 401/403; a 404 means the route or the object is
+// genuinely not there.
 func IsPermissionDenied(err error) bool {
 	switch StatusOf(err) {
 	case http.StatusForbidden, http.StatusUnauthorized:
@@ -516,11 +521,22 @@ func (c *Client) ListTeams(orgID int64) ([]Team, error) {
 	return teams, nil
 }
 
-func (c *Client) ListAdminUsers() ([]User, error) {
+// ListAllUsers returns every user in the Grafana instance, not just admins.
+//
+// It uses GET /api/users, which is the only documented way to list users
+// globally. Note that /api/admin/users is POST-only (create user) - a GET
+// against it matches no route and Grafana answers 404 "Not found" from the
+// router, which reads exactly like a permissions problem but is not one. This
+// call used to point there, and the resulting 404 on every refresh was
+// misread as "the service account token lacks server admin".
+//
+// Rights still matter: /api/users needs users:read on global.users:*, i.e.
+// Grafana server admin. That failure surfaces as 401/403, not 404.
+func (c *Client) ListAllUsers() ([]User, error) {
 	var users []User
 	page := 1
 	for {
-		endpoint := fmt.Sprintf("%s/api/admin/users?page=%d&perpage=1000", c.baseURL, page)
+		endpoint := fmt.Sprintf("%s/api/users?page=%d&perpage=1000", c.baseURL, page)
 		var resp []User
 		if _, err := c.doJSON("GET", endpoint, nil, &resp); err != nil {
 			return nil, err

@@ -82,7 +82,7 @@ func New(socket string) *Client {
 // Socket is the path this client dials, for error messages and diagnostics.
 func (c *Client) Socket() string { return c.socket }
 
-// Available reports whether the socket is present and openable by this
+// Available reports whether the socket is present and reachable by this
 // process. It separates "not mounted" from "mounted but no permission",
 // because those need very different fixes and the difference is invisible from
 // a generic connection error.
@@ -97,12 +97,19 @@ func (c *Client) Available() error {
 	if info.Mode()&os.ModeSocket == 0 {
 		return fmt.Errorf("%s is not a socket (mode %s)", c.socket, info.Mode())
 	}
-	f, err := os.OpenFile(c.socket, os.O_RDWR, 0)
+	// Probe by connecting, not by opening. open(2) on a socket inode always
+	// fails with ENXIO ("no such device or address") no matter who you are, so
+	// an os.OpenFile check here reports every socket as unusable - including a
+	// perfectly working one. connect(2) is the only way to learn anything.
+	conn, err := net.DialTimeout("unix", c.socket, 5*time.Second)
 	if err != nil {
-		return fmt.Errorf("%s is mounted but not readable by uid %d/gid %d - add the docker group gid of the host via group_add in docker-compose.yml: %w",
-			c.socket, os.Getuid(), os.Getgid(), err)
+		if errors.Is(err, os.ErrPermission) {
+			return fmt.Errorf("%s is mounted but uid %d/gid %d may not connect to it - add the docker group gid of the host via group_add in docker-compose.yml: %w",
+				c.socket, os.Getuid(), os.Getgid(), err)
+		}
+		return fmt.Errorf("cannot connect to %s: %w", c.socket, err)
 	}
-	_ = f.Close()
+	_ = conn.Close()
 	return nil
 }
 
