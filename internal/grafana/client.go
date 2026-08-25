@@ -425,7 +425,18 @@ func (c *Client) CreateUser(email, login, name, password string) (*User, error) 
 	var resp struct {
 		ID int64 `json:"id"`
 	}
-	if _, err := c.doJSON("POST", endpoint, payload, &resp); err != nil {
+	status, err := c.doJSON("POST", endpoint, payload, &resp)
+	if err != nil {
+		// 412 means the login or email is already taken. That is not a failure
+		// for our purposes - the account we wanted exists - so adopt it instead
+		// of aborting, and return its real id so the caller can go on to add it
+		// to orgs and teams. Happens whenever someone signs in via SSO between
+		// the plan being built and applied.
+		if status == http.StatusPreconditionFailed {
+			if existing, found, lookupErr := c.LookupUser(login); lookupErr == nil && found {
+				return existing, nil
+			}
+		}
 		return nil, err
 	}
 	return &User{ID: resp.ID, Name: name, Login: login, Email: email}, nil

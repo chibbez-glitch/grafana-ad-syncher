@@ -271,6 +271,60 @@ func (s *Server) buildPageData() (pageData, error) {
 
 // buildSyncIssues renders the syncer's issues for the template and counts them
 // by severity so the panel header can lead with the number that matters.
+// writeApplyError renders the apply failure with the individual issues inline.
+//
+// The bare "apply failed: 3 of 79 actions failed, see sync issues" that used to
+// be returned here meant leaving the page, finding the panel, and hoping the
+// next refresh had not already overwritten it. The failures are what the
+// operator needs, so put them on the page that reports the failure.
+func (s *Server) writeApplyError(w http.ResponseWriter, err error) {
+	issues := s.syncer.Issues()
+	applied := make([]syncer.Issue, 0, len(issues))
+	for _, issue := range issues {
+		if issue.Phase == syncer.PhaseApply {
+			applied = append(applied, issue)
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusInternalServerError)
+
+	var sb strings.Builder
+	sb.WriteString(`<!doctype html><meta charset="utf-8"><title>Apply failed</title>`)
+	sb.WriteString(`<link rel="stylesheet" href="/static/style.css">`)
+	sb.WriteString(`<div style="max-width:1100px;margin:2rem auto;padding:0 1rem;font-family:system-ui,sans-serif">`)
+	sb.WriteString(`<h1>Apply failed</h1><p>`)
+	sb.WriteString(template.HTMLEscapeString(err.Error()))
+	sb.WriteString(`</p>`)
+
+	if len(applied) == 0 {
+		sb.WriteString(`<p>No per-action detail was recorded.</p>`)
+	} else {
+		sb.WriteString(`<table style="width:100%;border-collapse:collapse">`)
+		sb.WriteString(`<tr><th align="left">Severity</th><th align="left">Scope</th>` +
+			`<th align="left">User</th><th align="left">Detail</th></tr>`)
+		for _, issue := range applied {
+			colour := "#b00020"
+			if issue.Severity != syncer.SeverityError {
+				colour = "#8a6d00"
+			}
+			sb.WriteString(`<tr style="border-top:1px solid #ddd;vertical-align:top">`)
+			sb.WriteString(`<td style="color:` + colour + `;padding:.4rem .6rem .4rem 0">` +
+				template.HTMLEscapeString(issue.Severity) + `</td>`)
+			sb.WriteString(`<td style="padding:.4rem .6rem .4rem 0">` + template.HTMLEscapeString(issue.Scope) + `</td>`)
+			sb.WriteString(`<td style="padding:.4rem .6rem .4rem 0">` + template.HTMLEscapeString(issue.Email) + `</td>`)
+			sb.WriteString(`<td style="padding:.4rem 0">` + template.HTMLEscapeString(issue.Message) + `</td>`)
+			sb.WriteString(`</tr>`)
+		}
+		sb.WriteString(`</table>`)
+	}
+
+	sb.WriteString(`<p style="margin-top:1.5rem"><a href="/">Back to the plan</a>` +
+		` &middot; re-run <strong>Preview sync</strong> to see what is still outstanding.</p></div>`)
+	_, _ = w.Write([]byte(sb.String()))
+}
+
 func buildSyncIssues(issues []syncer.Issue) ([]syncIssueView, int, int) {
 	views := make([]syncIssueView, 0, len(issues))
 	errorCount := 0
@@ -939,7 +993,7 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	s.syncer.RecordRun(err)
 	if err != nil {
 		_ = s.store.UpdatePlanStatus(planID, "failed")
-		http.Error(w, fmt.Sprintf("apply failed: %v", err), http.StatusInternalServerError)
+		s.writeApplyError(w, err)
 		return
 	}
 	_ = s.store.UpdatePlanStatus(planID, "applied")
@@ -967,7 +1021,7 @@ func (s *Server) handleApply(w http.ResponseWriter, r *http.Request) {
 	s.syncer.RecordRun(err)
 	if err != nil {
 		_ = s.store.UpdatePlanStatus(plan.ID, "failed")
-		http.Error(w, fmt.Sprintf("apply failed: %v", err), http.StatusInternalServerError)
+		s.writeApplyError(w, err)
 		return
 	}
 	_ = s.store.UpdatePlanStatus(plan.ID, "applied")
@@ -1023,7 +1077,7 @@ func (s *Server) handleApplySelected(w http.ResponseWriter, r *http.Request) {
 	s.syncer.RecordRun(err)
 	if err != nil {
 		_ = s.store.UpdatePlanStatus(plan.ID, "failed")
-		http.Error(w, fmt.Sprintf("apply failed: %v", err), http.StatusInternalServerError)
+		s.writeApplyError(w, err)
 		return
 	}
 	_ = s.store.UpdatePlanStatus(plan.ID, "applied-selected")

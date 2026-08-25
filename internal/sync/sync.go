@@ -381,6 +381,13 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 
 	var actions []store.PlanAction
 	userCache := map[string]*grafana.User{}
+	// plannedCreate keeps one create per person across all mappings. The loop
+	// below runs per mapping, and someone in two mapped groups used to collect
+	// two identical create_user actions: the first succeeded, the second came
+	// back 412 "already exists" and turned an otherwise clean apply into a
+	// failure. Team and org membership still get their own action per mapping -
+	// only the account creation is global.
+	plannedCreate := map[string]struct{}{}
 	roleByOrgEmail := map[int64]map[string]string{}
 	roleSourceByOrgEmail := map[int64]map[string]string{}
 	addedTeamUsers := map[string]int{}
@@ -497,9 +504,18 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 			}
 
 			if user == nil {
-				s.addIssue(PhasePlan, SeverityWarning, scope, email,
-					"no Grafana user matches mail %q or UPN %q in org %d", member.Mail, member.UPN, org.GrafanaOrgID)
+				_, accountedFor := plannedCreate[email]
+
 				if !s.allowCreateUsers {
+					// Genuinely skipped: no account, and we may not make one. Warn
+					// once per person rather than once per mapping - the blocked
+					// action below already names every affected mapping.
+					if !accountedFor {
+						plannedCreate[email] = struct{}{}
+						s.addIssue(PhasePlan, SeverityWarning, scope, email,
+							"no Grafana user matches mail %q or UPN %q in org %d, and user creation is disabled",
+							member.Mail, member.UPN, org.GrafanaOrgID)
+					}
 					actions = append(actions, store.PlanAction{
 						ActionType:    "blocked_create_user",
 						OrgID:         org.ID,
@@ -514,22 +530,31 @@ func (s *Syncer) BuildPlan() (*store.Plan, error) {
 					})
 					continue
 				}
-				name := member.DisplayName
-				if name == "" {
-					name = email
+
+				// Creation is allowed, so nothing is being skipped and this is not
+				// a warning. The plan carries a visible "create user" row instead;
+				// warning on it as well is what produced "49 warnings" for a plan
+				// that was entirely correct, and warnings you learn to ignore are
+				// how the original breakage stayed unnoticed for months.
+				if !accountedFor {
+					plannedCreate[email] = struct{}{}
+					name := member.DisplayName
+					if name == "" {
+						name = email
+					}
+					actions = append(actions, store.PlanAction{
+						ActionType:    "create_user",
+						OrgID:         org.ID,
+						GrafanaOrgID:  org.GrafanaOrgID,
+						TeamID:        teamID,
+						TeamName:      mapping.GrafanaTeamName,
+						Email:         email,
+						DisplayName:   name,
+						Role:          role,
+						ExternalGroupID: mapping.ExternalGroupID,
+						Note:          mappingNote(orgNameByID[org.ID], mapping),
+					})
 				}
-				actions = append(actions, store.PlanAction{
-					ActionType:    "create_user",
-					OrgID:         org.ID,
-					GrafanaOrgID:  org.GrafanaOrgID,
-					TeamID:        teamID,
-					TeamName:      mapping.GrafanaTeamName,
-					Email:         email,
-					DisplayName:   name,
-					Role:          role,
-					ExternalGroupID: mapping.ExternalGroupID,
-					Note:          mappingNote(orgNameByID[org.ID], mapping),
-				})
 			}
 
 			if roleByOrgEmail[org.ID] == nil {
