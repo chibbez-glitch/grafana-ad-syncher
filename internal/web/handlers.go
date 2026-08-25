@@ -41,7 +41,27 @@ type externalCache struct {
 	entraUsersErr   string
 	folderPerms     []folderPermGroup
 	folderPermsErr  string
+	orphans         []orphanView
+	orphansErr      string
 	refreshedAt     time.Time
+}
+
+// orphanView is a Grafana account the sync cannot account for: the person is
+// gone from Entra, disabled there, or in none of the mapped groups.
+//
+// This service never deletes or disables Grafana accounts - its only
+// destructive action is removing someone from a team - so this is a worklist
+// for a human, not something that gets applied. Treat it as a starting point
+// and not a verdict: guest accounts from another tenant and service accounts
+// legitimately appear here.
+type orphanView struct {
+	Login  string
+	Email  string
+	Name   string
+	Teams  string
+	Status string
+	Detail string
+	Class  string
 }
 
 type grafanaTeamView struct {
@@ -93,6 +113,8 @@ type pageData struct {
 	EntraUsers       []entraUserView
 	EntraUsersErr    string
 	FolderPerms      []folderPermGroup
+	Orphans          []orphanView
+	OrphansErr       string
 	FolderPermsErr   string
 	PlanGroups       []planTeamGroup
 	SyncIssues       []syncIssueView
@@ -244,6 +266,7 @@ func (s *Server) buildPageData() (pageData, error) {
 		// separately from the time.Time values above.
 		planCreatedAt = formatStoredTime(plan.CreatedAt)
 	}
+	orphans, orphansErr := s.cachedOrphans()
 	syncIssues, syncErrors, syncWarnings := buildSyncIssues(s.syncer.Issues())
 	lastRun, lastStatus := s.syncer.LastRun()
 	autoSyncEnabled := true
@@ -265,6 +288,8 @@ func (s *Server) buildPageData() (pageData, error) {
 		EntraUsersErr:   entraUsersErr,
 		FolderPerms:     folderPerms,
 		FolderPermsErr:  folderPermsErr,
+		Orphans:         orphans,
+		OrphansErr:      orphansErr,
 		PlanGroups:      planGroups,
 		SyncIssues:      syncIssues,
 		SyncErrorCount:  syncErrors,
@@ -401,11 +426,129 @@ func (s *Server) refreshExternalData() {
 	cache.entraGroups, cache.entraGroupsErr = s.loadEntraGroups(orgs, mappings)
 	cache.entraUsers, cache.entraUsersErr = s.loadEntraUsers()
 	cache.folderPerms, cache.folderPermsErr = s.loadGrafanaFolderPermissions(orgs)
+	cache.orphans, cache.orphansErr = s.loadOrphans(cache.grafanaUsers, cache.entraUsers)
 
 	s.cacheMu.Lock()
 	s.cache = cache
 	s.refresh = false
 	s.cacheMu.Unlock()
+}
+
+// cachedOrphans reads the orphan list from the cache. Callers reach it after
+// getExternalData, which is what keeps the cache fresh.
+func (s *Server) cachedOrphans() ([]orphanView, string) {
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+	return s.cache.orphans, s.cache.orphansErr
+}
+
+// loadOrphans lists Grafana accounts that no longer correspond to an active
+// Entra person in a mapped group.
+//
+// It needs the tenant-wide user list, not just the members of the mapped
+// groups, because those two answer different questions: "in no mapped group"
+// is routine, "not in Entra at all" is a leaver. Telling them apart is the
+// whole point of the panel, and the mapped-group membership alone cannot.
+func (s *Server) loadOrphans(grafanaUsers []grafanaUserView, entraUsers []entraUserView) ([]orphanView, string) {
+	if s.entra == nil {
+		return nil, "entra client not configured"
+	}
+	if len(grafanaUsers) == 0 {
+		return nil, ""
+	}
+	start := time.Now()
+
+	tenant, err := s.entra.ListUsers()
+	if err != nil {
+		log.Printf("ui: orphan check: entra user list failed: %v", err)
+		return nil, err.Error()
+	}
+
+	// Both mail and UPN, because Grafana stores whichever one the login provider
+	// sent, and in this tenant that differs per account.
+	type tenantUser struct {
+		enabled bool
+		display string
+	}
+	byAddress := make(map[string]tenantUser, len(tenant)*2)
+	for _, user := range tenant {
+		entry := tenantUser{enabled: user.AccountEnabled, display: user.DisplayName}
+		for _, address := range []string{user.Mail, user.UPN} {
+			address = strings.TrimSpace(strings.ToLower(address))
+			if address != "" {
+				byAddress[address] = entry
+			}
+		}
+	}
+
+	inMappedGroup := make(map[string]struct{}, len(entraUsers)*2)
+	for _, user := range entraUsers {
+		for _, address := range []string{user.Mail, user.UPN} {
+			address = strings.TrimSpace(strings.ToLower(address))
+			if address != "" {
+				inMappedGroup[address] = struct{}{}
+			}
+		}
+	}
+
+	out := make([]orphanView, 0)
+	for _, user := range grafanaUsers {
+		email := strings.TrimSpace(strings.ToLower(user.Email))
+		login := strings.TrimSpace(strings.ToLower(user.Login))
+
+		if _, ok := inMappedGroup[email]; ok {
+			continue
+		}
+		if _, ok := inMappedGroup[login]; ok {
+			continue
+		}
+
+		entry, found := byAddress[email]
+		if !found {
+			entry, found = byAddress[login]
+		}
+
+		view := orphanView{Login: user.Login, Email: user.Email, Name: user.Name, Teams: user.Teams}
+		switch {
+		case !found:
+			view.Status = "not in Entra"
+			view.Class = "danger"
+			view.Detail = "No Entra account matches this mail or UPN. Usually a leaver - but guests from another tenant can also sit under a different UPN, so check before removing."
+		case !entry.enabled:
+			view.Status = "disabled in Entra"
+			view.Class = "danger"
+			view.Detail = "The Entra account exists but is disabled. The person cannot sign in; the Grafana account and its team memberships remain."
+		default:
+			view.Status = "no mapped group"
+			view.Class = "muted"
+			view.Detail = "Active in Entra, but in none of the mapped _grf_ groups. Expected for service and admin accounts - not by itself a reason to remove anything."
+		}
+		out = append(out, view)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		// Worst first: a leaver matters more than an account that simply is not
+		// in a mapped group.
+		if out[i].Status != out[j].Status {
+			return orphanRank(out[i].Status) < orphanRank(out[j].Status)
+		}
+		return out[i].Login < out[j].Login
+	})
+
+	log.Printf("ui: orphan check: %d of %d grafana accounts unaccounted for, %d entra users scanned in %s",
+		len(out), len(grafanaUsers), len(tenant), time.Since(start).Round(time.Millisecond))
+	return out, ""
+}
+
+func orphanRank(status string) int {
+	switch status {
+	case "not in Entra":
+		return 0
+	case "disabled in Entra":
+		return 1
+	default:
+		return 2
+	}
 }
 
 func (s *Server) getExternalData(orgs []store.Org, mappings []store.Mapping) ([]grafanaTeamView, string, []grafanaUserView, string, []entraGroupView, string, []entraUserView, string, []folderPermGroup, string) {

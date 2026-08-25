@@ -249,6 +249,49 @@
   })();
 </script>
 
+<section class="card">
+  <h2>
+    Accounts to review
+    {{if .Orphans}}<span class="issue-count">{{len .Orphans}}</span>{{end}}
+  </h2>
+  <p class="issue-hint">
+    Grafana accounts with no active Entra person behind them in a mapped group.
+    This service never deletes or disables an account &mdash; its only destructive
+    action is removing someone from a team &mdash; so anything here is for you to
+    decide on manually, in <em>Grafana &rarr; Administration &rarr; Users</em>.
+    Prefer disabling over deleting: deleting orphans the dashboards and alerts
+    the person created.
+  </p>
+  {{if .OrphansErr}}
+  <p class="danger">Could not check against Entra: {{.OrphansErr}}</p>
+  {{else if not .Orphans}}
+  <p class="muted">Every Grafana account maps to an active person in a mapped group.</p>
+  {{else}}
+  <table>
+    <thead>
+      <tr>
+        <th>Status</th>
+        <th>Login</th>
+        <th>Name</th>
+        <th>Grafana teams</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{range .Orphans}}
+      <tr>
+        <td class="{{.Class}}">{{.Status}}</td>
+        <td>{{.Login}}</td>
+        <td>{{.Name}}</td>
+        <td>{{if .Teams}}{{.Teams}}{{else}}<span class="muted">none</span>{{end}}</td>
+        <td class="muted">{{.Detail}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</section>
+
 {{if .SyncIssues}}
 <section class="card">
   <h2>
